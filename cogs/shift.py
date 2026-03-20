@@ -21,6 +21,7 @@ ROLE_SRT             = 1426729477362159670
 ROLE_HSPU            = 1400862387619500144
 
 TRAINEE_ROLES        = {1400570836510838835, 1480298283200024606}
+ROLE_PROBATION       = 1317963256484069387
 
 LOG_CHANNEL_ID             = 1398812728541577247  # Shift log channel
 MSG_COUNT_CHANNEL_ID       = 1318199799085928458  # Message-count channel
@@ -658,9 +659,23 @@ class ShiftLeaderboardView(discord.ui.View):
 class ShiftListsView(discord.ui.View):
     def __init__(self, cog, guild, infractions):
         super().__init__(timeout=180)
-        self.cog        = cog
-        self.guild      = guild
+        self.cog         = cog
+        self.guild       = guild
         self.infractions = infractions
+        self.show_time   = False
+
+    async def _refresh(self, interaction: discord.Interaction):
+        if self.show_time:
+            embed = await self.cog._build_time_embed(self.guild)
+        else:
+            embed = await self.cog._build_infractions_embed(self.infractions)
+        await interaction.response.edit_message(embed=embed, view=self)
+
+    @discord.ui.button(label="📊 Show Shift Time", style=discord.ButtonStyle.secondary)
+    async def toggle_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.show_time = not self.show_time
+        button.label = "⚠️ Show Infractions" if self.show_time else "📊 Show Shift Time"
+        await self._refresh(interaction)
 
     @discord.ui.button(label="Get Copy-Pastable Text", style=discord.ButtonStyle.primary)
     async def copy_text(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -738,6 +753,11 @@ class ShiftListsView(discord.ui.View):
             lines.append("***__Eligible for Promotion__***")
             for i, (member, secs) in enumerate(self.infractions["promotions"], 1):
                 lines.append(f"> `{i}.` <@{member.id}> • {self.cog._format_duration(secs)} this wave")
+            lines.append("")
+        if self.infractions.get("probation_risk"):
+            lines.append("***__⚠️ At Risk — Probation Failure__***")
+            for i, (member, secs) in enumerate(self.infractions["probation_risk"], 1):
+                lines.append(f"> `{i}.` <@{member.id}> • {self.cog._format_duration(secs)} logged")
             lines.append("")
         if not any(self.infractions.values()):
             lines.append("No infractions. All quota met.")
@@ -1041,13 +1061,15 @@ class ShiftCog(commands.Cog):
     ) -> Dict[str, List]:
         manage_role = guild.get_role(ROLE_MANAGE_REQUIRED)
         infractions: Dict[str, List] = {
-            "demotions": [], "strikes": [], "warns": [], "promotions": []
+            "demotions": [], "strikes": [], "warns": [], "promotions": [], "probation_risk": []
         }
         if not manage_role:
             return infractions
 
         for member in manage_role.members:
             mids          = {r.id for r in member.roles}
+            if any(r.id in TRAINEE_ROLES for r in member.roles):
+                continue
             gu_secs       = self.store.total_gu_equiv(member.id)
             quota_minutes = await self._get_quota(member)
 
@@ -1057,6 +1079,9 @@ class ShiftCog(commands.Cog):
                 continue
             if is_on_loa(member.id):
                 continue
+
+            if ROLE_PROBATION in mids and (quota_minutes == 0 or gu_secs < quota_minutes * 60):
+                infractions["probation_risk"].append((member, gu_secs))
 
             if quota_minutes > 0 and gu_secs < quota_minutes * 60:
                 misses = self.store.get_misses(member.id)
@@ -1075,7 +1100,32 @@ class ShiftCog(commands.Cog):
         for cat in ["demotions", "strikes", "warns"]:
             infractions[cat].sort(key=lambda x: x[1], reverse=True)
         infractions["promotions"].sort(key=lambda x: x[1], reverse=True)
+        infractions["probation_risk"].sort(key=lambda x: x[1])
         return infractions
+
+    async def _build_time_embed(self, guild: discord.Guild) -> discord.Embed:
+        manage_role = guild.get_role(ROLE_MANAGE_REQUIRED)
+        embed = self.base_embed(
+            f"FHP Ghost Unit — Shift Time {utcnow().strftime('%Y-%m-%d')}", colour_info())
+        if not manage_role:
+            embed.description = "No data."
+            return embed
+        rows = []
+        for member in manage_role.members:
+            if any(r.id in TRAINEE_ROLES for r in member.roles):
+                continue
+            gu_secs       = self.store.total_gu_equiv(member.id)
+            quota_minutes = await self._get_quota(member)
+            met           = quota_minutes == 0 or gu_secs >= quota_minutes * 60
+            rows.append((gu_secs, member, met, quota_minutes))
+        rows.sort(key=lambda x: x[0], reverse=True)
+        lines = []
+        for i, (secs, member, met, quota) in enumerate(rows, 1):
+            status = "⬜" if quota == 0 else ("✅" if met else "❌")
+            quota_str = f" / {human_td(quota * 60)}" if quota > 0 else ""
+            lines.append(f"`{i}.` {status} <@{member.id}> — **{human_td(secs)}**{quota_str}")
+        embed.description = "\n".join(lines) if lines else "No data."
+        return embed
 
     async def _build_infractions_embed(
         self, infractions: Dict[str, List]
@@ -1096,6 +1146,12 @@ class ShiftCog(commands.Cog):
                 for i, (m, s) in enumerate(infractions["promotions"], 1)
             ]
             sections.append("***__Eligible for Promotion__***\n" + "\n".join(lines))
+        if infractions.get("probation_risk"):
+            lines = [
+                f"> `{i}.` <@{m.id}> • {self._format_duration(s)} logged"
+                for i, (m, s) in enumerate(infractions["probation_risk"], 1)
+            ]
+            sections.append("***__⚠️ At Risk — Probation Failure__***\n" + "\n".join(lines))
         embed.description = "\n\n".join(sections) if sections else "No infractions. All quota met."
         return embed
 
@@ -1478,6 +1534,8 @@ class ShiftCog(commands.Cog):
             if manage_role:
                 for member in manage_role.members:
                     mids          = {r.id for r in member.roles}
+                    if any(r.id in TRAINEE_ROLES for r in member.roles):
+                        continue
                     gu_secs       = self.store.total_gu_equiv(member.id)
                     quota_minutes = await self._get_quota(member)
                     exempt = (
