@@ -1,0 +1,3 @@
+[submodule "hrm-utilities"]
+  path = hrm-utilities
+  url = https://github.com/your-pilotakeksz/hrm-utilities.git

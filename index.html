@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Redirecting…</title>
+
+  <!-- Meta refresh fallback -->
+  <meta http-equiv="refresh" content="0;url=./embed-builder-web/" />
+  <style>
+    html,body{height:100%;margin:0;display:flex;align-items:center;justify-content:center;background:#0b0d0f;color:#e8eef2;font-family:Inter,system-ui,Arial}
+    a.button{background:#d0b47b;color:#071019;padding:10px 14px;border-radius:8px;text-decoration:none;font-weight:700}
+    .note{max-width:720px;text-align:center;padding:20px}
+  </style>
+  <script>
+    // keep query/hash when redirecting; JS redirect is primary for speed
+    (function(){
+      try{
+        const target = './embed-builder-web/' + location.search + location.hash;
+        location.replace(target);
+      }catch(e){
+        // ignore
+      }
+    })();
+  </script>
+</head>
+<body>
+  <div class="note">
+    <h2>Redirecting to editor…</h2>
+    <p>If your browser didn't redirect automatically, <a class="button" href="./embed-builder-web/">click here</a>.</p>
+  </div>
+</body>
+</html>
