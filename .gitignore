@@ -10,3 +10,6 @@ beta_cogs/
 __pycache__/
 *.pyc
 *.pyo
+.env
+.env.token
+.env.cogs
