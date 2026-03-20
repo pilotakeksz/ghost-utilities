@@ -10,16 +10,17 @@ import asyncio
 from typing import Dict, Any, Optional, List, Tuple
 import glob
 
-# -------------------- CONFIG CONSTANTS --------------------
 IMAGE_URL = "https://cdn.discordapp.com/attachments/1403360987096027268/1408449383925809262/image.png?ex=69b41734&is=69b2c5b4&hm=c4f6e557a9d3583555a610f7ffd9a3874719ad17df17f93bc67fbce1b0efc3f5&"
 
-ROLE_MANAGE_REQUIRED = 1317963289518542959  # Personnel role - can use /shift_manage
-ROLE_SHIFT_ON        = 1318198109725134930  # Role assigned when on shift
-ROLE_BREAK           = 1385724780845727774  # Role assigned when on break
-ROLE_ADMIN           = 1318181592719687681  # Can use /shift_admin and /shift_logging
-ROLE_ON_DUTY         = 1318198109725134930  # On-duty reminder role
-ROLE_SRT             = 1426729477362159670  # SRT subdivision role
-ROLE_HSPU            = 1400862387619500144  # HSPU subdivision role
+ROLE_MANAGE_REQUIRED = 1317963289518542959
+ROLE_SHIFT_ON        = 1318198109725134930
+ROLE_BREAK           = 1385724780845727774
+ROLE_ADMIN           = 1318181592719687681
+ROLE_ON_DUTY         = 1318198109725134930
+ROLE_SRT             = 1426729477362159670
+ROLE_HSPU            = 1400862387619500144
+
+TRAINEE_ROLES        = {1400570836510838835, 1480298283200024606}
 
 LOG_CHANNEL_ID             = 1398812728541577247  # Shift log channel
 MSG_COUNT_CHANNEL_ID       = 1318199799085928458  # Message-count channel
@@ -30,26 +31,16 @@ ALLOWED_SHIFT_CATEGORIES   = [
     1398675655771816187
 ]
 
-# -------------------- QUOTA CONFIG --------------------
-# GU (normal) quota: 120 minutes (2 hours) per week, due Saturday 15:00 UTC
-# Promotion eligibility: 240+ minutes (4 hours) in the wave
 GU_QUOTA_MINUTES      = 120
 GU_PROMO_MINUTES      = 240
 
-# SRT quota: 1 shift per wave. Requires a GU shift >45 min that wave to be valid.
-# HSPU quota: 90 minutes per wave. Requires a GU shift >45 min that wave to be valid.
 SRT_QUOTA_SHIFTS  = 1
 HSPU_QUOTA_MINUTES = 90
 GU_MIN_FOR_SUB    = 45   # GU shift must be longer than this (minutes) for SRT/HSPU shifts to count
 
-# Quota override roles (exempt / reduced)
 QUOTA_ROLE_0         = 1317963293767241808  # fully exempt
 QUOTA_ROLE_ADMIN_0   = ROLE_ADMIN           # admins are exempt
 
-# Promotion cooldown by rank role (days).
-# Set each to the role ID for that rank. Zero means "not configured — skip this tier."
-# _calculate_member_cooldown walks these in order; first match wins.
-# Falls back to PROMO_COOLDOWN_DEFAULT_DAYS if no rank role matches.
 PROMO_COOLDOWN_SUPERINTENDENT  = 1365262290236084264   # TODO  — min 6 weeks (42 days)
 PROMO_COOLDOWN_COLONEL         = 1317963238838632448  # TODO  — min 5 weeks (35 days)
 PROMO_COOLDOWN_LT_COLONEL      = 1317963239308525692   # TODO  — min 5 weeks (35 days)
@@ -60,18 +51,15 @@ PROMO_COOLDOWN_2ND_LT          = 1459727193377865850   # TODO  — min 1 week  (
 PROMO_COOLDOWN_1ST_LT          = 1317963243360223253   # TODO  — min 1 week  (7 days)
 PROMO_COOLDOWN_DEFAULT_DAYS    = 7   # all other personnel
 
-# Infraction thresholds (minutes short of quota)
 WARN_THRESHOLD       = 45   # under 45 min short → warning
 STRIKE_THRESHOLD     = 30   # under 30 min short → strike
 DEMOTION_THRESHOLD   = 15   # under 15 min short → demotion
 
-# -------------------- SHIFT TYPES --------------------
 SHIFT_TYPE_NORMAL = "GU"
 SHIFT_TYPE_SRT    = "SRT"
 SHIFT_TYPE_HSPU   = "HSPU"
 SHIFT_TYPES       = [SHIFT_TYPE_NORMAL, SHIFT_TYPE_SRT, SHIFT_TYPE_HSPU]
 
-# -------------------- STORAGE PATHS --------------------
 DATA_DIR    = "data"
 LOGS_DIR    = os.path.join(DATA_DIR, "logs")
 STATE_FILE  = os.path.join(DATA_DIR, "shift_state.json")
@@ -79,13 +67,10 @@ RECORDS_FILE = os.path.join(DATA_DIR, "shift_records.json")
 META_FILE   = os.path.join(DATA_DIR, "meta.json")
 MISSES_FILE  = os.path.join(DATA_DIR, "shift_misses.json")  # consecutive quota-miss counter per user
 
-# Path to LOA cog's active-LOA registry (shared data between loa.py and shift.py)
 ACTIVE_LOAS_FILE = os.path.join(DATA_DIR, "active_loas.json")
 
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(LOGS_DIR, exist_ok=True)
-
-# -------------------- LOA INTEGRATION --------------------
 
 def get_active_loa(user_id: int) -> Optional[dt.datetime]:
     """Return the LOA end datetime for a user if they have an active, approved LOA, else None.
@@ -107,10 +92,10 @@ def get_active_loa(user_id: int) -> Optional[dt.datetime]:
         return None
 
 def is_on_loa(user_id: int) -> bool:
-    """True if the user has a currently active LOA."""
     return get_active_loa(user_id) is not None
 
-# -------------------- UTILITIES --------------------
+def is_trainee(member: discord.Member) -> bool:
+    return any(r.id in TRAINEE_ROLES for r in member.roles)
 
 def utcnow() -> dt.datetime:
     return dt.datetime.now(dt.timezone.utc)
@@ -137,8 +122,6 @@ def colour_warn() -> discord.Colour: return discord.Colour.orange()
 def colour_err()  -> discord.Colour: return discord.Colour.red()
 def colour_info() -> discord.Colour: return discord.Colour.blurple()
 
-# -------------------- PROMOTION COOLDOWN HELPER --------------------
-
 def _rank_cooldown_days(roles: List[discord.Role]) -> int:
     """
     Return the promotion cooldown in days for a member based on their rank role.
@@ -162,8 +145,6 @@ def _rank_cooldown_days(roles: List[discord.Role]) -> int:
             return days
     return PROMO_COOLDOWN_DEFAULT_DAYS
 
-
-# -------------------- PERSISTENCE LAYER --------------------
 class Store:
     """
     state: per-user ongoing shifts
@@ -197,7 +178,8 @@ class Store:
         self.state: Dict[str, Any]   = {}
         self.records: List[Dict[str, Any]] = []
         self.meta: Dict[str, Any]    = {}
-        self.misses: Dict[str, int]  = {}  # str(user_id) -> consecutive quota-miss count
+        self.misses: Dict[str, int]  = {}
+        self.miss_wave_ts: Dict[str, int] = {}
         self.load()
 
     def load(self):
@@ -212,8 +194,13 @@ class Store:
                 self.meta = json.load(f)
         if os.path.exists(MISSES_FILE):
             with open(MISSES_FILE, "r", encoding="utf-8") as f:
-                self.misses = json.load(f)
-        # defaults
+                raw = json.load(f)
+                if isinstance(raw, dict) and "misses" in raw:
+                    self.misses = raw["misses"]
+                    self.miss_wave_ts = raw.get("miss_wave_ts", {})
+                else:
+                    self.misses = raw
+                    self.miss_wave_ts = {}
         self.meta.setdefault("logging_enabled", True)
         self.meta.setdefault("last_reset_ts", ts_to_int(utcnow()))
         self.meta.setdefault("last_promotions", {})
@@ -230,9 +217,8 @@ class Store:
         with open(META_FILE, "w", encoding="utf-8") as f:
             json.dump(self.meta, f, indent=2)
         with open(MISSES_FILE, "w", encoding="utf-8") as f:
-            json.dump(self.misses, f, indent=2)
+            json.dump({"misses": self.misses, "miss_wave_ts": self.miss_wave_ts}, f, indent=2)
 
-    # ---- State helpers ----
     def is_on_shift(self, user_id: int) -> bool:
         return str(user_id) in self.state
 
@@ -302,7 +288,6 @@ class Store:
                 return True
         return False
 
-    # ---- Totals ----
     def total_for_user(self, user_id: int, shift_type: Optional[str] = None) -> int:
         """Total accumulated seconds. If shift_type given, filter to that type."""
         total = sum(
@@ -335,7 +320,6 @@ class Store:
             and (shift_type is None or r.get("shift_type") == shift_type)
             and r["duration"] >= min_duration_seconds
         )
-        # Count active shift if it qualifies (approximate)
         st = self.state.get(str(user_id))
         if st and (shift_type is None or st.get("shift_type") == shift_type):
             elapsed = st["accum"]
@@ -348,7 +332,6 @@ class Store:
     def get_statistics(self) -> Tuple[int, int]:
         return len(self.records), sum(r["duration"] for r in self.records)
 
-    # ---- Promotion ----
     def can_be_promoted(self, user_id: int, member_roles: List[discord.Role]) -> bool:
         last_promo = self.meta["last_promotions"].get(str(user_id), 0)
         if last_promo == 0:
@@ -361,7 +344,6 @@ class Store:
         days_since = (ts_to_int(utcnow()) - last_promo) / (24 * 60 * 60)
         return days_since >= cooldown_days
 
-    # ---- Infractions ----
     def get_infractions(self, user_id: int) -> Dict[str, int]:
         return self.meta["infractions"].get(str(user_id), {"demotions": 0, "strikes": 0, "warns": 0})
 
@@ -371,7 +353,6 @@ class Store:
         self.meta["infractions"][str(user_id)][infraction_type] += 1
         self.save()
 
-    # ---- Excuses ----
     def is_excused(self, user_id: int) -> bool:
         current_reset_ts = self.meta.get("last_reset_ts", ts_to_int(utcnow()))
         return self.meta.get("excuses", {}).get(str(user_id)) == current_reset_ts
@@ -388,22 +369,29 @@ class Store:
             return True
         return False
 
-
-    # ---- Consecutive miss helpers ----
     def get_misses(self, user_id: int) -> int:
         return self.misses.get(str(user_id), 0)
 
     def increment_miss(self, user_id: int):
+        current_reset_ts = self.meta.get("last_reset_ts", 0)
+        last_miss_wave   = self.miss_wave_ts.get(str(user_id), 0)
+        if last_miss_wave != current_reset_ts and last_miss_wave != 0:
+            self.misses[str(user_id)] = 0
         self.misses[str(user_id)] = self.get_misses(user_id) + 1
+        self.miss_wave_ts[str(user_id)] = current_reset_ts
         self.save()
 
     def clear_misses(self, user_id: int):
+        changed = False
         if str(user_id) in self.misses:
             del self.misses[str(user_id)]
+            changed = True
+        if str(user_id) in self.miss_wave_ts:
+            del self.miss_wave_ts[str(user_id)]
+            changed = True
+        if changed:
             self.save()
 
-
-# -------------------- SHIFT TYPE SELECTION VIEW --------------------
 class ShiftTypeView(discord.ui.View):
     """Shown when the user clicks Start Shift — lets them pick GU / SRT / HSPU."""
 
@@ -418,7 +406,7 @@ class ShiftTypeView(discord.ui.View):
         guild = interaction.guild
         if guild is None:
             return
-        if not cog.store.meta.get("logging_enabled", True):
+        if not cog.store.meta.get("logging_enabled", True) and not is_trainee(user):
             await interaction.response.edit_message(
                 embed=cog.embed_info("Shift logging is currently disabled."), view=self.manage_view)
             return
@@ -427,14 +415,13 @@ class ShiftTypeView(discord.ui.View):
                 embed=cog.embed_warn("You're already on a shift."), view=self.manage_view)
             return
 
-        # ── LOA compliance check ─────────────────────────────────────────────
         loa_end = get_active_loa(user.id)
         if loa_end is not None:
-            # Personnel on LOA may not participate in shifts — log the violation
             await cog.log_event(
                 guild,
                 f"⚠️ **LOA VIOLATION** — {user.mention} attempted to start a **{shift_type}** shift "
-                f"while on active LOA (ends <t:{int(loa_end.timestamp())}:F>). Shift was **not started**."
+                f"while on active LOA (ends <t:{int(loa_end.timestamp())}:F>). Shift was **not started**.",
+                actor=user
             )
             embed = cog.embed_warn(
                 f"⚠️ **You are currently on Leave of Absence** (ends <t:{int(loa_end.timestamp())}:R>).\n\n"
@@ -443,7 +430,6 @@ class ShiftTypeView(discord.ui.View):
             )
             await interaction.response.edit_message(embed=embed, view=self.manage_view)
             return
-        # ─────────────────────────────────────────────────────────────────────
 
         cog.store.start_shift(user.id, shift_type)
         role_on    = guild.get_role(ROLE_SHIFT_ON)
@@ -455,7 +441,7 @@ class ShiftTypeView(discord.ui.View):
                 await user.add_roles(role_on, reason="Shift start")
         except discord.Forbidden:
             pass
-        await cog.log_event(guild, f"🟢 {user.mention} started a **{shift_type}** shift.")
+        await cog.log_event(guild, f"🟢 {user.mention} started a **{shift_type}** shift.", actor=user)
         embed = await cog.build_manage_embed(user)
         await interaction.response.edit_message(embed=embed, view=self.manage_view)
         try:
@@ -480,8 +466,6 @@ class ShiftTypeView(discord.ui.View):
         embed = await self.cog.build_manage_embed(interaction.user)
         await interaction.response.edit_message(embed=embed, view=self.manage_view)
 
-
-# -------------------- SHIFT MANAGE VIEW --------------------
 class ShiftManageView(discord.ui.View):
     def __init__(self, bot: commands.Bot, owner_id: Optional[int] = None):
         super().__init__(timeout=None)
@@ -508,18 +492,17 @@ class ShiftManageView(discord.ui.View):
         guild = interaction.guild
         if guild is None:
             return
-        if not cog.store.meta.get("logging_enabled", True):
+        if not cog.store.meta.get("logging_enabled", True) and not is_trainee(user):
             await interaction.response.edit_message(
                 embed=cog.embed_info("Shift logging is currently disabled."), view=self)
             return
-        if not any(r.id == ROLE_MANAGE_REQUIRED for r in user.roles):  # type: ignore
+        if not any(r.id == ROLE_MANAGE_REQUIRED for r in user.roles) and not is_trainee(user):  # type: ignore
             await interaction.response.edit_message(
                 embed=cog.embed_error("You do not have permission to manage shifts."), view=self)
             return
         st = cog.store.get_user_state(user.id)
         if st:
             if st.get("on_break"):
-                # Resume from break
                 cog.store.toggle_break(user.id)
                 role_on    = guild.get_role(ROLE_SHIFT_ON)
                 role_break = guild.get_role(ROLE_BREAK)
@@ -530,7 +513,7 @@ class ShiftManageView(discord.ui.View):
                         await user.add_roles(role_on, reason="Resumed shift")
                 except discord.Forbidden:
                     pass
-                await cog.log_event(guild, f"⏯️ {user.mention} resumed their shift (returned from break).")
+                await cog.log_event(guild, f"⏯️ {user.mention} resumed their shift (returned from break).", actor=user)
                 embed = await cog.build_manage_embed(user)
                 await interaction.response.edit_message(embed=embed, view=self)
                 try:
@@ -542,7 +525,6 @@ class ShiftManageView(discord.ui.View):
                 embed=cog.embed_warn("You're already on shift."), view=self)
             return
 
-        # Show shift type selection
         type_view = ShiftTypeView(cog, self)
         embed = cog.embed_info("Select your shift type:")
         embed.add_field(name="🔵 GU Shift",   value="Regular Ghost Unit shift. 2h/week quota.", inline=False)
@@ -558,11 +540,11 @@ class ShiftManageView(discord.ui.View):
         guild = interaction.guild
         if guild is None:
             return
-        if not cog.store.meta.get("logging_enabled", True):
+        if not cog.store.meta.get("logging_enabled", True) and not is_trainee(user):
             await interaction.response.edit_message(
                 embed=cog.embed_info("Shift logging is currently disabled."), view=self)
             return
-        if not any(r.id == ROLE_MANAGE_REQUIRED for r in user.roles):  # type: ignore
+        if not any(r.id == ROLE_MANAGE_REQUIRED for r in user.roles) and not is_trainee(user):  # type: ignore
             await interaction.response.edit_message(
                 embed=cog.embed_error("You do not have permission to manage shifts."), view=self)
             return
@@ -580,13 +562,13 @@ class ShiftManageView(discord.ui.View):
                     await user.remove_roles(role_on, reason="Shift break")
                 if role_break:
                     await user.add_roles(role_break, reason="Shift break")
-                await cog.log_event(guild, f"⏸️ {user.mention} started a break.")
+                await cog.log_event(guild, f"⏸️ {user.mention} started a break.", actor=user)
             else:
                 if role_break and role_break in user.roles:
                     await user.remove_roles(role_break, reason="Shift resume")
                 if role_on:
                     await user.add_roles(role_on, reason="Shift resume")
-                await cog.log_event(guild, f"▶️ {user.mention} ended their break.")
+                await cog.log_event(guild, f"▶️ {user.mention} ended their break.", actor=user)
         except discord.Forbidden:
             pass
         embed = await cog.build_manage_embed(user)
@@ -600,11 +582,11 @@ class ShiftManageView(discord.ui.View):
         guild = interaction.guild
         if guild is None:
             return
-        if not cog.store.meta.get("logging_enabled", True):
+        if not cog.store.meta.get("logging_enabled", True) and not is_trainee(user):
             await interaction.response.edit_message(
                 embed=cog.embed_info("Shift logging is currently disabled."), view=self)
             return
-        if not any(r.id == ROLE_MANAGE_REQUIRED for r in user.roles):  # type: ignore
+        if not any(r.id == ROLE_MANAGE_REQUIRED for r in user.roles) and not is_trainee(user):  # type: ignore
             await interaction.response.edit_message(
                 embed=cog.embed_error("You do not have permission to manage shifts."), view=self)
             return
@@ -627,7 +609,8 @@ class ShiftManageView(discord.ui.View):
         await cog.log_event(
             guild,
             f"🔴 {user.mention} stopped a **{shift_type}** shift. "
-            f"ID: `{record['id']}` Duration: **{human_td(record['duration'])}**"
+            f"ID: `{record['id']}` Duration: **{human_td(record['duration'])}**",
+            actor=user
         )
         embed = await cog.build_manage_embed(user)
         await interaction.response.edit_message(embed=embed, view=self)
@@ -636,8 +619,6 @@ class ShiftManageView(discord.ui.View):
         except Exception:
             pass
 
-
-# -------------------- LEADERBOARD VIEW --------------------
 class ShiftLeaderboardView(discord.ui.View):
     def __init__(self, cog, guild):
         super().__init__(timeout=120)
@@ -674,8 +655,6 @@ class ShiftLeaderboardView(discord.ui.View):
     async def hspu_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self._send(interaction, "hspu", "HSPU Leaderboard — Shift Count", colour_warn())
 
-
-# -------------------- INFRACTION LISTS VIEW --------------------
 class ShiftListsView(discord.ui.View):
     def __init__(self, cog, guild, infractions):
         super().__init__(timeout=180)
@@ -691,28 +670,60 @@ class ShiftListsView(discord.ui.View):
     @discord.ui.button(label="Remove from List", style=discord.ButtonStyle.danger)
     async def remove_infraction(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_message(
-            "Type the number of the user to remove from the infractions list.", ephemeral=True)
+            "Type entries to remove, e.g. `I1 I3 P2`.\n"
+            "`I<n>` removes infraction entry n, `P<n>` removes promotion entry n.",
+            ephemeral=True)
+        def check(m):
+            return m.author.id == interaction.user.id and m.channel == interaction.channel
+        try:
+            msg = await self.cog.bot.wait_for("message", check=check, timeout=60)
+        except Exception:
+            await interaction.channel.send("Timed out.")
+            return
+
+        tokens = msg.content.upper().split()
+        infraction_indices = []
+        promotion_indices  = []
+        for tok in tokens:
+            if tok.startswith("I") and tok[1:].isdigit():
+                infraction_indices.append(int(tok[1:]))
+            elif tok.startswith("P") and tok[1:].isdigit():
+                promotion_indices.append(int(tok[1:]))
+
         all_infractions = (
             self.infractions.get("demotions", []) +
             self.infractions.get("strikes", [])   +
             self.infractions.get("warns", [])
         )
-        def check(m):
-            return m.author.id == interaction.user.id and m.channel == interaction.channel
-        try:
-            msg = await self.cog.bot.wait_for("message", check=check, timeout=60)
-            idx = int(msg.content.strip())
+
+        removed = []
+
+        for idx in sorted(set(infraction_indices), reverse=True):
             if 1 <= idx <= len(all_infractions):
                 member = all_infractions[idx - 1][0]
                 for cat in ["demotions", "strikes", "warns"]:
+                    before = len(self.infractions.get(cat, []))
                     self.infractions[cat] = [
-                        entry for entry in self.infractions.get(cat, []) if entry[0].id != member.id
+                        e for e in self.infractions.get(cat, []) if e[0].id != member.id
                     ]
-                await interaction.channel.send(f"Removed {member.mention} from infractions list.")
-            else:
-                await interaction.channel.send("Invalid number.")
-        except Exception:
-            await interaction.channel.send("Failed to remove user.")
+                    if len(self.infractions.get(cat, [])) < before:
+                        removed.append(f"I{idx} ({member.mention})")
+                        break
+
+        promotions = self.infractions.get("promotions", [])
+        for idx in sorted(set(promotion_indices), reverse=True):
+            if 1 <= idx <= len(promotions):
+                member = promotions[idx - 1][0]
+                self.infractions["promotions"] = [
+                    e for e in promotions if e[0].id != member.id
+                ]
+                promotions = self.infractions["promotions"]
+                removed.append(f"P{idx} ({member.mention})")
+
+        if removed:
+            await interaction.channel.send(f"Removed: {', '.join(removed)}")
+        else:
+            await interaction.channel.send("No valid entries found to remove.")
 
     def _generate_infractions_text(self) -> str:
         lines = [f"## FHP Ghost Unit — Wave Review {utcnow().strftime('%Y-%m-%d')}"]
@@ -732,8 +743,6 @@ class ShiftListsView(discord.ui.View):
             lines.append("No infractions. All quota met.")
         return "\n".join(lines)
 
-
-# -------------------- REMINDER VIEWS --------------------
 class ShiftReminderView(discord.ui.View):
     def __init__(self, cog, user_id: int):
         super().__init__(timeout=None)
@@ -764,11 +773,11 @@ class ShiftReminderView(discord.ui.View):
             await self.cog.log_event(
                 guild,
                 f"🔴 {interaction.user.mention} ended their shift via reminder. "
-                f"ID: `{record['id']}` Duration: **{human_td(record['duration'])}**"
+                f"ID: `{record['id']}` Duration: **{human_td(record['duration'])}**",
+                actor=interaction.user
             )
         await interaction.response.send_message(
             f"✅ Your shift has been ended. Duration: **{human_td(record['duration'])}**", ephemeral=True)
-
 
 class ChannelEndShiftView(discord.ui.View):
     def __init__(self, cog):
@@ -797,20 +806,18 @@ class ChannelEndShiftView(discord.ui.View):
             await self.cog.log_event(
                 guild,
                 f"🔴 {user.mention} ended their shift via channel reminder. "
-                f"ID: `{record['id']}` Duration: **{human_td(record['duration'])}**"
+                f"ID: `{record['id']}` Duration: **{human_td(record['duration'])}**",
+                actor=user
             )
         await interaction.response.send_message(
             f"✅ Your shift has been ended. Duration: **{human_td(record['duration'])}**", ephemeral=True)
 
-
-# -------------------- MAIN COG --------------------
 class ShiftCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot   = bot
         self.store = Store()
         self.bot.add_view(ShiftManageView(bot))
 
-    # ---------- LISTENERS ----------
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
         if message.channel.id != PROMOTIONS_CHANNEL_ID:
@@ -860,7 +867,6 @@ class ShiftCog(commands.Cog):
             self.store.save()
 
        
-    # ---------- EMBED HELPERS ----------
     def base_embed(self, title: str, colour: discord.Colour) -> discord.Embed:
         e = discord.Embed(title=title, colour=colour, timestamp=utcnow())
         e.set_image(url=IMAGE_URL)
@@ -875,7 +881,9 @@ class ShiftCog(commands.Cog):
     def embed_error(self, desc: str) -> discord.Embed:
         e = self.base_embed("Error", colour_err()); e.description = desc; return e
 
-    async def log_event(self, guild: discord.Guild, message: str):
+    async def log_event(self, guild: discord.Guild, message: str, actor: Optional[discord.Member] = None):
+        if actor is not None and is_trainee(actor):
+            return
         logline = f"[{utcnow().isoformat()}] {message}\n"
         with open(os.path.join(LOGS_DIR, f"{utcnow().date()}.log"), "a", encoding="utf-8") as f:
             f.write(logline)
@@ -885,8 +893,6 @@ class ShiftCog(commands.Cog):
             emb.description = message
             await ch.send(embed=emb)
 
-
-    # ---------- MANAGE EMBED ----------
     async def build_manage_embed(self, user: discord.Member) -> discord.Embed:
         st              = self.store.get_user_state(user.id)
         logging_enabled = self.store.meta.get("logging_enabled", True)
@@ -904,7 +910,6 @@ class ShiftCog(commands.Cog):
             colour = colour_ok()
             status = "Active"
 
-        # Active shift type badge
         if st:
             stype = st.get("shift_type", SHIFT_TYPE_NORMAL)
             type_badges = {SHIFT_TYPE_NORMAL: "🔵 GU", SHIFT_TYPE_SRT: "🔴 SRT", SHIFT_TYPE_HSPU: "🟠 HSPU"}
@@ -914,11 +919,9 @@ class ShiftCog(commands.Cog):
         e.add_field(name="Logging", value="Enabled" if logging_enabled else "Disabled", inline=True)
         e.add_field(name="Status",  value=status, inline=True)
 
-        # Total this wave (all types combined for the leaderboard display)
         total_all = self.store.total_for_user(user.id)
         e.add_field(name="Total This Wave", value=human_td(total_all), inline=True)
 
-        # Leaderboard placement
         guild = user.guild
         if guild:
             manage_role = guild.get_role(ROLE_MANAGE_REQUIRED)
@@ -936,7 +939,6 @@ class ShiftCog(commands.Cog):
         e.set_footer(text=f"User: {user.display_name}")
         return e
 
-    # ---------- QUOTA HELPER ----------
     async def _get_quota(self, member: Optional[discord.Member]) -> int:
         """Return GU quota in minutes for a member."""
         if member is None:
@@ -953,7 +955,6 @@ class ShiftCog(commands.Cog):
             min_duration_seconds=GU_MIN_FOR_SUB * 60
         ) >= 1
 
-    # ---------- LEADERBOARD BUILDER ----------
     async def _build_leaderboard_lines(self, guild: discord.Guild, filter_mode: str = "all") -> List[str]:
         manage_role = guild.get_role(ROLE_MANAGE_REQUIRED)
         if not manage_role:
@@ -1007,7 +1008,6 @@ class ShiftCog(commands.Cog):
                 rank += 1
             return out or ["No HSPU members found."]
 
-        # GU time leaderboard (all other modes) — SRT + HSPU time counts toward GU total
         rows: List[Tuple[int, str, int, bool, int]] = []
         for member in manage_role.members:
             gu_secs = self.store.total_gu_equiv(member.id)
@@ -1036,7 +1036,6 @@ class ShiftCog(commands.Cog):
             rank += 1
         return out or ["No data."]
 
-    # ---------- INFRACTION / LIST BUILDER ----------
     async def _build_lists(
         self, guild: discord.Guild
     ) -> Dict[str, List]:
@@ -1052,21 +1051,14 @@ class ShiftCog(commands.Cog):
             gu_secs       = self.store.total_gu_equiv(member.id)
             quota_minutes = await self._get_quota(member)
 
-            # Exemptions
             if QUOTA_ROLE_0 in mids or QUOTA_ROLE_ADMIN_0 in mids:
-                # Exempt — clear any stored misses so they don't accumulate silently
-                self.store.clear_misses(member.id)
                 continue
             if self.store.is_excused(member.id):
-                self.store.clear_misses(member.id)
                 continue
             if is_on_loa(member.id):
-                self.store.clear_misses(member.id)
                 continue
 
-            # GU quota check — consecutive miss tracking
             if quota_minutes > 0 and gu_secs < quota_minutes * 60:
-                self.store.increment_miss(member.id)
                 misses = self.store.get_misses(member.id)
                 if misses >= 3:
                     infractions["demotions"].append((member, misses))
@@ -1075,10 +1067,6 @@ class ShiftCog(commands.Cog):
                 else:
                     infractions["warns"].append((member, misses))
             else:
-                # Met quota — clear consecutive miss streak
-                self.store.clear_misses(member.id)
-
-                # Promotions eligibility — 4+ hours AND off cooldown
                 if gu_secs >= 4 * 60 * 60:
                     _, remaining = self._calculate_member_cooldown(member)
                     if remaining == 0:
@@ -1120,7 +1108,6 @@ class ShiftCog(commands.Cog):
         if s or not parts: parts.append(f"{s}s")
         return " ".join(parts)
 
-    # ---------- SLASH COMMANDS ----------
     @app_commands.command(name="shift_manage", description="Open the shift management panel.")
     async def shift_manage(self, interaction: discord.Interaction):
         user  = interaction.user
@@ -1137,7 +1124,7 @@ class ShiftCog(commands.Cog):
                     f"or channels inside the allowed categories.",
                     ephemeral=True)
                 return
-        if not any(r.id == ROLE_MANAGE_REQUIRED for r in user.roles):
+        if not any(r.id == ROLE_MANAGE_REQUIRED for r in user.roles) and not is_trainee(user):
             await interaction.response.send_message(
                 "You do not have the required role to manage shifts.", ephemeral=True)
             return
@@ -1281,7 +1268,6 @@ class ShiftCog(commands.Cog):
         except Exception:
             pass
 
-    # ---------- ADMIN GROUP ----------
     admin_group = app_commands.Group(name="shift_admin", description="Administrative shift controls.")
 
     @admin_group.command(name="user", description="Admin actions for a specific user.")
@@ -1487,6 +1473,24 @@ class ShiftCog(commands.Cog):
             self.store.meta["infractions"]      = {}
             self.store.meta["last_promotions"]  = {}
             self.store.save()
+
+            manage_role = guild.get_role(ROLE_MANAGE_REQUIRED)
+            if manage_role:
+                for member in manage_role.members:
+                    mids          = {r.id for r in member.roles}
+                    gu_secs       = self.store.total_gu_equiv(member.id)
+                    quota_minutes = await self._get_quota(member)
+                    exempt = (
+                        QUOTA_ROLE_0 in mids or QUOTA_ROLE_ADMIN_0 in mids
+                        or self.store.is_excused(member.id)
+                        or is_on_loa(member.id)
+                    )
+                    if exempt:
+                        self.store.clear_misses(member.id)
+                    elif quota_minutes > 0 and gu_secs < quota_minutes * 60:
+                        self.store.increment_miss(member.id)
+                    else:
+                        self.store.clear_misses(member.id)
             for path in glob.glob(os.path.join(LOGS_DIR, "*.log")):
                 try: os.remove(path)
                 except Exception: pass
@@ -1524,7 +1528,6 @@ class ShiftCog(commands.Cog):
             view        = ShiftListsView(self, guild, infractions)
             await interaction.response.send_message(embed=embed, view=view)
 
-    # ---------- COOLDOWN COMMANDS ----------
     @app_commands.command(name="cooldown", description="Show your promotion cooldown status.")
     async def cooldown_slash(self, interaction: discord.Interaction, user: Optional[discord.Member] = None):
         member         = user or interaction.user
@@ -1580,8 +1583,6 @@ class ShiftCog(commands.Cog):
         total_secs    = cooldown_secs + extension
         remaining     = max(0, total_secs - (ts_to_int(utcnow()) - last_ts))
         return cooldown_days, remaining
-
-    # ---------- PROMOTIONS FORMATTER ----------
 
     @app_commands.command(name="shift_promotions", description="Generate a formatted promotions post (admin only).")
     @app_commands.describe(
@@ -1674,7 +1675,6 @@ class ShiftCog(commands.Cog):
                 await user.send(embed=embed)
         except Exception as e:
             print(f"Cooldown end DM error for {user_id}: {e}")
-
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(ShiftCog(bot))

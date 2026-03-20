@@ -1,18 +1,3 @@
-"""
-roster.py — FHP Ghost Unit roster cog.
-
-Generates troopers.html from Discord role members, downloads Roblox avatars,
-and pushes the result to GitHub.
-
-Sections are determined by Discord role IDs (SECTION_ROLES / SECTION_ROLE_ORDER).
-HICOM is identified by callsign number 1–6 (matches generate_roster.py logic).
-HICOM avatars are cached and never re-downloaded or pushed to GitHub.
-Regular avatars are re-used if already on disk; pass reload_all=True to force refresh.
-
-Config constants at the top — fill in GITHUB_REPO, GITHUB_TOKEN, and
-PROJECT_ROOT before deploying.
-"""
-
 from __future__ import annotations
 
 import base64
@@ -25,24 +10,17 @@ import aiohttp
 import discord
 from discord.ext import commands, tasks
 
-# ─────────────────────────── CONFIG ───────────────────────────────────────────
-
-# GitHub
 GITHUB_TOKEN  = os.getenv("GITHUB_TOKEN", "")
 GITHUB_REPO   = os.getenv("GITHUB_REPO",  "YOUR_ORG/YOUR_REPO")
 GITHUB_BRANCH = os.getenv("GITHUB_BRANCH", "main")
 
-# Where the website repo lives on disk (parent of assets/, troopers.html, etc.)
 PROJECT_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "website")
 AVATARS_DIR  = os.path.join(PROJECT_ROOT, "assets", "avatars")
 
-# Who can run !roster manually
 OWNER_ID = 840949634071658507
 
-# Personnel role — everyone on the roster must have this
 ROLE_PERSONNEL = 1317963289518542959
 
-# Section roles → (display label, section key)
 SECTION_ROLES = {
     1318181592719687681: ("High Command",      "hicom"),
     1317963237920215111: ("Senior High Rank",  "shr"),
@@ -52,27 +30,22 @@ SECTION_ROLES = {
     1400570836510838835: ("Cadet",             "cadet"),
 }
 
-# Priority order — first match wins when a member has multiple section roles
 SECTION_ROLE_ORDER = [
-    1318181592719687681,  # HICOM
-    1317963237920215111,  # SHR
-    1317963242819293295,  # HR
-    1317963244685758576,  # SP
-    1317963249509208115,  # LR
-    1400570836510838835,  # CADET
+    1318181592719687681,
+    1317963237920215111,
+    1317963242819293295,
+    1317963244685758576,
+    1317963249509208115,
+    1400570836510838835,
 ]
 
-# Specialty roles
 ROLE_SRT  = 1426729477362159670
 ROLE_HSPU = 1400862387619500144
 
 FALLBACK_AVATAR = "https://tr.rbxcdn.com/6c6b8e6b7b7e7b7b7b7b7b7b7b7b7b/420/420/AvatarHeadshot/Png"
 
-# Callsign numbers 1–6 are treated as HICOM (mirrors generate_roster.py logic)
 HICOM_CALLSIGN_MAX = 6
 
-# Discord user IDs whose avatars are fully static — never pulled from Roblox,
-# never overwritten, never pushed to GitHub. File must exist at assets/avatars/<discord_id>.png
 STATIC_AVATAR_DISCORD_IDS = {
     1278294632496889935,
     840949634071658507,
@@ -80,10 +53,17 @@ STATIC_AVATAR_DISCORD_IDS = {
     807631247886123008,
 }
 
-# ─────────────────────────── HELPERS ──────────────────────────────────────────
+HICOM_ROLE_ID = 1318181592719687681
+
+STATUS_ROLE_IDS = {
+    1317963293767241808,
+    1318198109725134930,
+}
+
+_SKIP_ROLE_IDS = STATUS_ROLE_IDS | {HICOM_ROLE_ID}
+
 
 def _clean_role_name(name: str) -> str:
-    """Strip '𝐅𝐇𝐏 𝐆𝐡𝐨𝐬𝐭 | ' or any '… | ' prefix from a role name."""
     if "|" in name:
         return name.split("|", 1)[1].strip()
     return name.strip()
@@ -94,13 +74,6 @@ def _sanitize_filename(name: str) -> str:
 
 
 def _parse_callsign_and_name(display_name: str) -> tuple[str, str]:
-    """
-    Formats handled:
-      LOA | GU-123 | Name   → callsign=GU-123, name=Name
-      GU-123 | Name          → callsign=GU-123, name=Name
-      GU-123                 → callsign=GU-123, name=GU-123
-    Returns (callsign, roblox_username).
-    """
     dn = re.sub(r"(?i)^loa\s*\|\s*", "", display_name.strip())
     parts = [p.strip() for p in dn.split("|")]
     for i, part in enumerate(parts):
@@ -119,27 +92,11 @@ def _callsign_num(cs: str) -> int:
 
 
 def _is_hicom(member: discord.Member, callsign: str) -> bool:
-    """HICOM requires BOTH the HICOM role AND a callsign number of 1–6.
-    Callsign-only check is insufficient — low numbers can appear in other names."""
     has_hicom_role = any(r.id == HICOM_ROLE_ID for r in member.roles)
     return has_hicom_role and _callsign_num(callsign) <= HICOM_CALLSIGN_MAX
 
 
-HICOM_ROLE_ID = 1318181592719687681  # Never used as sectionKey — HICOM is decided by callsign
-
-# Status roles (On Duty, LOA) — sit above rank roles in hierarchy, must be ignored
-STATUS_ROLE_IDS = {
-    1317963293767241808,  # On Duty
-    1318198109725134930,  # Leave of Absence
-}
-
-# All role IDs to skip when walking the section hierarchy
-_SKIP_ROLE_IDS = STATUS_ROLE_IDS | {HICOM_ROLE_ID}
-
-
 def _get_section(member: discord.Member) -> tuple[str, str]:
-    """Return (section_label, section_key) for the member's highest real section role.
-    Skips the HICOM role (decided by callsign) and status roles (On Duty / LOA)."""
     role_ids = {r.id for r in member.roles}
     for rid in SECTION_ROLE_ORDER:
         if rid in _SKIP_ROLE_IDS:
@@ -151,18 +108,12 @@ def _get_section(member: discord.Member) -> tuple[str, str]:
 
 
 def _get_rank_name(member: discord.Member) -> str:
-    """
-    Return the member's rank: the highest-position role that contains '|'
-    but is NOT one of the section roles.
-    Falls back to the highest section role name.
-    """
     skip_ids = set(SECTION_ROLES.keys()) | _SKIP_ROLE_IDS
     for role in sorted(member.roles, key=lambda r: r.position, reverse=True):
         if role.id in skip_ids:
             continue
         if "|" in role.name:
             return _clean_role_name(role.name)
-    # Fallback: highest real section role name
     for role in sorted(member.roles, key=lambda r: r.position, reverse=True):
         if role.id in set(SECTION_ROLES.keys()) and role.id not in _SKIP_ROLE_IDS:
             return _clean_role_name(role.name)
@@ -191,7 +142,6 @@ def _escape(s: str) -> str:
             .replace(">", "&gt;")
             .replace('"', "&quot;"))
 
-# ─────────────────────────── ROBLOX API ───────────────────────────────────────
 
 async def _get_roblox_user_id(session: aiohttp.ClientSession, username: str) -> Optional[int]:
     try:
@@ -239,7 +189,6 @@ async def _download_avatar(session: aiohttp.ClientSession, url: str, path: str) 
         print(f"  Avatar download error ({path}): {e}")
         return False
 
-# ─────────────────────────── HTML BUILDER ─────────────────────────────────────
 
 def _roster_card(t: dict, is_hicom: bool = False) -> str:
     name       = _escape(t.get("roblox") or t.get("name", "unknown"))
@@ -268,7 +217,6 @@ def _roster_card(t: dict, is_hicom: bool = False) -> str:
             </div>"""
 
 
-# Section order for the rendered page (HICOM is handled separately above)
 SECTION_ORDER = [
     ("shr",   "Senior High Rank"),
     ("hr",    "High Rank"),
@@ -364,7 +312,6 @@ def build_html(hicom: list, regulars: list) -> str:
 </html>
 """
 
-# ─────────────────────────── GITHUB PUSH ──────────────────────────────────────
 
 async def _get_file_sha(session: aiohttp.ClientSession, api_url: str, headers: dict) -> Optional[str]:
     try:
@@ -377,90 +324,93 @@ async def _get_file_sha(session: aiohttp.ClientSession, api_url: str, headers: d
     return None
 
 
-async def _github_push(session: aiohttp.ClientSession, path_in_repo: str, content_bytes: bytes, message: str) -> bool:
-    """Create or update a single file in the GitHub repo via the Contents API.
-    Retries once on 409 (SHA conflict) with a freshly fetched SHA."""
-    api_url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{path_in_repo}"
+async def _github_batch_push(
+    session: aiohttp.ClientSession,
+    files: list[tuple[str, bytes]],
+    message: str,
+) -> bool:
+    """Push multiple files in a single commit using the Git Trees API."""
     headers = {
         "Authorization": f"Bearer {GITHUB_TOKEN}",
         "Accept": "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
     }
-    encoded = base64.b64encode(content_bytes).decode()
+    base = f"https://api.github.com/repos/{GITHUB_REPO}"
 
-    for attempt in range(2):
-        sha = await _get_file_sha(session, api_url, headers)
-        payload: dict = {
-            "message": message,
-            "content": encoded,
-            "branch": GITHUB_BRANCH,
-        }
-        if sha:
-            payload["sha"] = sha
+    try:
+        async with session.get(
+            f"{base}/git/ref/heads/{GITHUB_BRANCH}",
+            headers=headers,
+            timeout=aiohttp.ClientTimeout(total=10),
+        ) as r:
+            r.raise_for_status()
+            ref_data = await r.json()
+        latest_commit_sha = ref_data["object"]["sha"]
 
-        try:
-            async with session.put(
-                api_url, headers=headers, json=payload,
+        async with session.get(
+            f"{base}/git/commits/{latest_commit_sha}",
+            headers=headers,
+            timeout=aiohttp.ClientTimeout(total=10),
+        ) as r:
+            r.raise_for_status()
+            commit_data = await r.json()
+        base_tree_sha = commit_data["tree"]["sha"]
+
+        tree_items = []
+        for repo_path, content_bytes in files:
+            async with session.post(
+                f"{base}/git/blobs",
+                headers=headers,
+                json={"content": base64.b64encode(content_bytes).decode(), "encoding": "base64"},
                 timeout=aiohttp.ClientTimeout(total=30),
             ) as r:
-                if r.status in (200, 201):
-                    return True
-                if r.status == 409 and attempt == 0:
-                    continue  # re-fetch SHA and retry
-                text = await r.text()
-                print(f"  GitHub push failed ({r.status}): {text[:200]}")
-                return False
-        except Exception as e:
-            print(f"  GitHub push error: {e}")
-            return False
+                r.raise_for_status()
+                blob = await r.json()
+            tree_items.append({
+                "path": repo_path,
+                "mode": "100644",
+                "type": "blob",
+                "sha": blob["sha"],
+            })
 
-    return False
+        async with session.post(
+            f"{base}/git/trees",
+            headers=headers,
+            json={"base_tree": base_tree_sha, "tree": tree_items},
+            timeout=aiohttp.ClientTimeout(total=30),
+        ) as r:
+            r.raise_for_status()
+            new_tree = await r.json()
 
+        async with session.post(
+            f"{base}/git/commits",
+            headers=headers,
+            json={
+                "message": message,
+                "tree": new_tree["sha"],
+                "parents": [latest_commit_sha],
+            },
+            timeout=aiohttp.ClientTimeout(total=30),
+        ) as r:
+            r.raise_for_status()
+            new_commit = await r.json()
 
-async def _push_all_files(
-    session: aiohttp.ClientSession,
-    troopers_html: str,
-    avatar_pairs: list[tuple[str, str]],
-) -> bool:
-    """Push troopers.html then all regular avatars. Returns True if all succeeded."""
-    stamp = dt.datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
-    ok = True
+        async with session.patch(
+            f"{base}/git/refs/heads/{GITHUB_BRANCH}",
+            headers=headers,
+            json={"sha": new_commit["sha"]},
+            timeout=aiohttp.ClientTimeout(total=15),
+        ) as r:
+            r.raise_for_status()
 
-    if not await _github_push(
-        session,
-        "troopers.html",
-        troopers_html.encode("utf-8"),
-        f"roster: auto-update {stamp}",
-    ):
-        ok = False
+        return True
 
-    for repo_path, local_path in avatar_pairs:
-        if not os.path.isfile(local_path):
-            continue
-        with open(local_path, "rb") as f:
-            data = f.read()
-        if not await _github_push(
-            session, repo_path, data,
-            f"roster: avatar {os.path.basename(local_path)} {stamp}",
-        ):
-            ok = False
+    except Exception as e:
+        print(f"  GitHub batch push error: {e}")
+        return False
 
-    return ok
-
-# ─────────────────────────── CORE GENERATOR ───────────────────────────────────
 
 async def generate_roster(guild: discord.Guild, reload_all: bool = False) -> tuple[bool, str]:
-    """
-    Build troopers.html from Discord roles, push to GitHub.
-
-    - Section (shr/hr/sp/lr/cadet/hicom) comes from Discord role IDs.
-    - HICOM is additionally confirmed by callsign number 1–6.
-    - HICOM avatars: cached by roblox username, never re-downloaded or pushed.
-    - Regular avatars: cached by Roblox user ID; re-downloaded if reload_all=True.
-    - Members whose Roblox lookup fails still appear with the fallback avatar.
-
-    Returns (success, message).
-    """
     personnel_role = guild.get_role(ROLE_PERSONNEL)
     if not personnel_role:
         return False, "Personnel role not found in guild."
@@ -476,17 +426,14 @@ async def generate_roster(guild: discord.Guild, reload_all: bool = False) -> tup
         for member in members:
             callsign, roblox_username = _parse_callsign_and_name(member.display_name)
             section_label, section_key = _get_section(member)
-            rank       = _get_rank_name(member)
+            rank = _get_rank_name(member)
             spec_label, spec_kind = _get_specialties(member)
-
-            # HICOM requires the HICOM role AND callsign number 1–6
             is_hicom = _is_hicom(member, callsign)
 
             avatar_path_rel   = None
             avatar_path_local = None
 
             if member.id in STATIC_AVATAR_DISCORD_IDS:
-                # ── Static: pre-placed image, never touched ─────────────────
                 fname             = f"{member.id}.png"
                 avatar_path_local = os.path.join(AVATARS_DIR, fname)
                 avatar_path_rel   = f"assets/avatars/{fname}"
@@ -495,13 +442,11 @@ async def generate_roster(guild: discord.Guild, reload_all: bool = False) -> tup
                     avatar_path_rel = FALLBACK_AVATAR
 
             elif is_hicom:
-                # ── HICOM: use stored file by username; never re-download or push
                 fname             = f"{_sanitize_filename(roblox_username)}.png"
                 avatar_path_local = os.path.join(AVATARS_DIR, fname)
                 avatar_path_rel   = f"assets/avatars/{fname}"
 
                 if not os.path.isfile(avatar_path_local):
-                    # File genuinely missing — fetch once, then stays cached forever
                     user_id = await _get_roblox_user_id(session, roblox_username)
                     if user_id:
                         url = await _get_avatar_url(session, user_id)
@@ -514,7 +459,6 @@ async def generate_roster(guild: discord.Guild, reload_all: bool = False) -> tup
                         avatar_path_rel = FALLBACK_AVATAR
 
             else:
-                # ── Regular: download by Roblox user ID ────────────────────
                 user_id = await _get_roblox_user_id(session, roblox_username)
                 if user_id:
                     fname             = f"{user_id}.png"
@@ -543,7 +487,6 @@ async def generate_roster(guild: discord.Guild, reload_all: bool = False) -> tup
                 "_isStatic":       member.id in STATIC_AVATAR_DISCORD_IDS,
             })
 
-        # Sort by callsign number within each section
         troopers.sort(key=lambda t: _callsign_num(t["callsign"]))
 
         hicom    = [t for t in troopers if t["_isHicom"]]
@@ -551,30 +494,36 @@ async def generate_roster(guild: discord.Guild, reload_all: bool = False) -> tup
 
         html = build_html(hicom, regulars)
 
-        # Write locally
         out_path = os.path.join(PROJECT_ROOT, "troopers.html")
         os.makedirs(os.path.dirname(out_path), exist_ok=True)
         with open(out_path, "w", encoding="utf-8") as f:
             f.write(html)
 
-        # Collect avatar pairs — HICOM and static users excluded (stored, not generated)
-        avatar_pairs: list[tuple[str, str]] = []
+        files_to_push: list[tuple[str, bytes]] = [
+            ("troopers.html", html.encode("utf-8"))
+        ]
+
         for t in troopers:
             if t["_isHicom"] or t["_isStatic"]:
                 continue
             local = t.get("_avatarLocal")
             if local and os.path.isfile(local):
-                avatar_pairs.append((t["avatarPath"], local))
+                with open(local, "rb") as f:
+                    files_to_push.append((t["avatarPath"], f.read()))
 
-        print(f"[roster] Pushing {1 + len(avatar_pairs)} files to GitHub...")
-        success = await _push_all_files(session, html, avatar_pairs)
+        stamp = dt.datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+        print(f"[roster] Pushing {len(files_to_push)} files in one commit...")
+        success = await _github_batch_push(
+            session,
+            files_to_push,
+            f"roster: auto-update {stamp}",
+        )
 
-    msg = f"✅ Roster updated — {len(troopers)} members, {len(avatar_pairs)} avatars pushed."
+    msg = f"✅ Roster updated — {len(troopers)} members, {len(files_to_push) - 1} avatars pushed."
     if not success:
-        msg = "⚠️ Roster generated but one or more GitHub pushes failed. Check logs."
+        msg = "⚠️ Roster generated but GitHub push failed. Check logs."
     return success, msg
 
-# ─────────────────────────── COG ──────────────────────────────────────────────
 
 class RosterCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
@@ -592,7 +541,7 @@ class RosterCog(commands.Cog):
                 print("[roster] Running daily refresh...")
                 ok, msg = await generate_roster(guild)
                 print(f"[roster] {msg}")
-                return  # Only process the first matching guild
+                return
 
     @daily_refresh.before_loop
     async def before_daily(self):
@@ -600,10 +549,6 @@ class RosterCog(commands.Cog):
 
     @commands.command(name="roster")
     async def roster_cmd(self, ctx: commands.Context, *, flags: str = ""):
-        """
-        Manually regenerate and push the roster. Owner only.
-        Pass --reload-all to force re-download of all regular avatars.
-        """
         if ctx.author.id != OWNER_ID:
             await ctx.reply("You don't have permission to use this command.", mention_author=False)
             return
