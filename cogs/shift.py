@@ -25,8 +25,8 @@ ROLE_PROBATION       = 1317963256484069387
 
 LOG_CHANNEL_ID             = 1398812728541577247  # Shift log channel
 MSG_COUNT_CHANNEL_ID       = 1318199799085928458  # Message-count channel
-PROMOTIONS_CHANNEL_ID      = 1317963343524270192  # Promotions channel (for ping tracking)
-
+PROMOTIONS_CHANNEL_ID      = 131796334352427019  # Promotions channel (for ping tracking)
+2
 ALLOWED_SHIFT_CHANNEL_ID   = 1318174456744775703 # Allowed channel for shift commands
 ALLOWED_SHIFT_CATEGORIES   = [
     1398675655771816187
@@ -209,6 +209,7 @@ class Store:
         self.meta.setdefault("cooldown_extensions", {})
         self.meta.setdefault("admin_cooldowns", {})
         self.meta.setdefault("excuses", {})
+        self.meta.setdefault("last_friday_quota_reminder", "")
 
     def save(self):
         with open(STATE_FILE, "w", encoding="utf-8") as f:
@@ -656,6 +657,10 @@ class ShiftLeaderboardView(discord.ui.View):
     async def hspu_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self._send(interaction, "hspu", "HSPU Leaderboard — Shift Count", colour_warn())
 
+    @discord.ui.button(label="📊 GU Time", style=discord.ButtonStyle.secondary, row=2)
+    async def gu_time_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._send(interaction, "gu_time", "GU — Shift Time", colour_info())
+
 class ShiftListsView(discord.ui.View):
     def __init__(self, cog, guild, infractions):
         super().__init__(timeout=180)
@@ -837,6 +842,87 @@ class ShiftCog(commands.Cog):
         self.bot   = bot
         self.store = Store()
         self.bot.add_view(ShiftManageView(bot))
+
+    async def cog_load(self) -> None:
+        self.friday_quota_reminder.start()
+
+    async def cog_unload(self) -> None:
+        self.friday_quota_reminder.cancel()
+
+    @tasks.loop(time=dt.time(hour=14, minute=0, tzinfo=dt.timezone.utc))
+    async def friday_quota_reminder(self) -> None:
+        if utcnow().weekday() != 4:
+            return
+        today = utcnow().date().isoformat()
+        if self.store.meta.get("last_friday_quota_reminder") == today:
+            return
+        total = 0
+        for guild in self.bot.guilds:
+            total += await self._send_quota_reminders_for_guild(guild)
+        self.store.meta["last_friday_quota_reminder"] = today
+        self.store.save()
+
+    @friday_quota_reminder.before_loop
+    async def before_friday_quota_reminder(self) -> None:
+        await self.bot.wait_until_ready()
+
+    async def _members_needing_quota_reminder(
+        self, guild: discord.Guild
+    ) -> List[Tuple[discord.Member, int, int]]:
+        """Members with personnel role who have not met GU quota: (member, gu_secs, need_secs)."""
+        manage_role = guild.get_role(ROLE_MANAGE_REQUIRED)
+        if not manage_role:
+            return []
+        out: List[Tuple[discord.Member, int, int]] = []
+        for member in manage_role.members:
+            mids = {r.id for r in member.roles}
+            if any(r.id in TRAINEE_ROLES for r in member.roles):
+                continue
+            if QUOTA_ROLE_0 in mids or QUOTA_ROLE_ADMIN_0 in mids:
+                continue
+            if self.store.is_excused(member.id):
+                continue
+            if is_on_loa(member.id):
+                continue
+            quota_minutes = await self._get_quota(member)
+            if quota_minutes == 0:
+                continue
+            gu_secs = self.store.total_gu_equiv(member.id)
+            need_secs = quota_minutes * 60
+            if gu_secs < need_secs:
+                out.append((member, gu_secs, need_secs))
+        return out
+
+    async def _send_quota_reminders_for_guild(self, guild: discord.Guild) -> int:
+        targets = await self._members_needing_quota_reminder(guild)
+        sent = 0
+        for member, gu_secs, need_secs in targets:
+            short = need_secs - gu_secs
+            embed = self.base_embed("Weekly GU quota reminder", colour_warn())
+            embed.description = (
+                "You have **not yet met** your weekly GU shift quota for this wave.\n\n"
+                f"**Logged:** {human_td(gu_secs)}\n"
+                f"**Required:** {human_td(need_secs)}\n"
+                f"**Short by:** {human_td(short)}\n\n"
+                "Please complete your shifts before the wave ends."
+            )
+            try:
+                await member.send(embed=embed)
+                sent += 1
+            except Exception:
+                pass
+        if sent:
+            try:
+                ch = guild.get_channel(LOG_CHANNEL_ID)
+                if isinstance(ch, discord.TextChannel):
+                    emb = self.base_embed("Quota reminders (scheduled)", colour_info())
+                    emb.description = (
+                        f"Sent **{sent}** GU quota reminder DM(s) to members who have not met quota."
+                    )
+                    await ch.send(embed=emb)
+            except Exception:
+                pass
+        return sent
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
@@ -1036,6 +1122,9 @@ class ShiftCog(commands.Cog):
             rows.append((gu_secs, member.display_name, member.id, met, quota))
         rows.sort(key=lambda x: x[0], reverse=True)
 
+        if filter_mode == "gu_time":
+            return await self._build_gu_time_lines(guild)
+
         if filter_mode == "leaderboard_met":
             rows = [r for r in rows if r[3] and not (r[0] == 0 and r[4] == 0)]
         elif filter_mode == "leaderboard_notmet":
@@ -1055,6 +1144,26 @@ class ShiftCog(commands.Cog):
             out.append(f"#{rank} <@{uid}> — {human_td(secs)}{quota_str} — {status}")
             rank += 1
         return out or ["No data."]
+
+    async def _build_gu_time_lines(self, guild: discord.Guild) -> List[str]:
+        manage_role = guild.get_role(ROLE_MANAGE_REQUIRED)
+        if not manage_role:
+            return ["No data."]
+        rows: List[Tuple[int, discord.Member, bool, int]] = []
+        for member in manage_role.members:
+            if any(r.id in TRAINEE_ROLES for r in member.roles):
+                continue
+            gu_secs       = self.store.total_gu_equiv(member.id)
+            quota_minutes = await self._get_quota(member)
+            met           = quota_minutes == 0 or gu_secs >= quota_minutes * 60
+            rows.append((gu_secs, member, met, quota_minutes))
+        rows.sort(key=lambda x: x[0], reverse=True)
+        lines = []
+        for i, (secs, member, met, quota) in enumerate(rows, 1):
+            status = "⬜" if quota == 0 else ("✅" if met else "❌")
+            quota_str = f" / {human_td(quota * 60)}" if quota > 0 else ""
+            lines.append(f"`{i}.` {status} <@{member.id}> — **{human_td(secs)}**{quota_str}")
+        return lines or ["No data."]
 
     async def _build_lists(
         self, guild: discord.Guild
@@ -1092,10 +1201,16 @@ class ShiftCog(commands.Cog):
                 else:
                     infractions["warns"].append((member, misses))
             else:
-                if gu_secs >= 4 * 60 * 60:
-                    _, remaining = self._calculate_member_cooldown(member)
-                    if remaining == 0:
-                        infractions["promotions"].append((member, gu_secs))
+                _, remaining = self._calculate_member_cooldown(member)
+                if remaining != 0:
+                    continue
+                promo = False
+                if gu_secs >= GU_PROMO_MINUTES * 60:
+                    promo = True
+                elif ROLE_PROBATION in mids and quota_minutes > 0 and gu_secs >= quota_minutes * 60:
+                    promo = True
+                if promo and not any(m.id == member.id for m, _ in infractions["promotions"]):
+                    infractions["promotions"].append((member, gu_secs))
 
         for cat in ["demotions", "strikes", "warns"]:
             infractions[cat].sort(key=lambda x: x[1], reverse=True)
@@ -1110,21 +1225,8 @@ class ShiftCog(commands.Cog):
         if not manage_role:
             embed.description = "No data."
             return embed
-        rows = []
-        for member in manage_role.members:
-            if any(r.id in TRAINEE_ROLES for r in member.roles):
-                continue
-            gu_secs       = self.store.total_gu_equiv(member.id)
-            quota_minutes = await self._get_quota(member)
-            met           = quota_minutes == 0 or gu_secs >= quota_minutes * 60
-            rows.append((gu_secs, member, met, quota_minutes))
-        rows.sort(key=lambda x: x[0], reverse=True)
-        lines = []
-        for i, (secs, member, met, quota) in enumerate(rows, 1):
-            status = "⬜" if quota == 0 else ("✅" if met else "❌")
-            quota_str = f" / {human_td(quota * 60)}" if quota > 0 else ""
-            lines.append(f"`{i}.` {status} <@{member.id}> — **{human_td(secs)}**{quota_str}")
-        embed.description = "\n".join(lines) if lines else "No data."
+        lines = await self._build_gu_time_lines(guild)
+        embed.description = "\n".join(lines)
         return embed
 
     async def _build_infractions_embed(
@@ -1242,6 +1344,27 @@ class ShiftCog(commands.Cog):
         embed       = await self._build_infractions_embed(infractions)
         view        = ShiftListsView(self, guild, infractions)
         await interaction.response.send_message(embed=embed, view=view)
+
+    @app_commands.command(
+        name="shift_quota_reminder",
+        description="DM members who have not met weekly GU quota (HICOM / admin).",
+    )
+    async def shift_quota_reminder_cmd(self, interaction: discord.Interaction):
+        if not any(r.id == ROLE_ADMIN for r in interaction.user.roles):
+            await interaction.response.send_message("You lack permission.", ephemeral=True)
+            return
+        guild = interaction.guild
+        if guild is None:
+            await interaction.response.send_message("Guild only.", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True)
+        n = await self._send_quota_reminders_for_guild(guild)
+        if utcnow().weekday() == 4 and n > 0:
+            self.store.meta["last_friday_quota_reminder"] = utcnow().date().isoformat()
+            self.store.save()
+        await interaction.followup.send(
+            f"Sent **{n}** quota reminder(s).", ephemeral=True
+        )
 
     @app_commands.command(name="shift_logging", description="Enable or disable shift logging (admin only).")
     async def shift_logging(self, interaction: discord.Interaction, enabled: Optional[bool] = None):
