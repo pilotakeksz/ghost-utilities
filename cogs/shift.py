@@ -656,7 +656,7 @@ class ShiftLeaderboardView(discord.ui.View):
     async def notmet_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self._send(interaction, "leaderboard_notmet", "Leaderboard — Not Met", colour_err())
 
-    @discord.ui.button(label="⬜ Exempt", style=discord.ButtonStyle.secondary, row=0)
+    @discord.ui.button(label="⬜ Exempt", style=discord.ButtonStyle.secondary, row=1)
     async def exempt_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self._send(interaction, "exempt", "Leaderboard — Exempt", discord.Colour.light_grey())
 
@@ -668,9 +668,6 @@ class ShiftLeaderboardView(discord.ui.View):
     async def hspu_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self._send(interaction, "hspu", "HSPU Leaderboard", colour_warn())
 
-    @discord.ui.button(label="📊 GU Time", style=discord.ButtonStyle.secondary, row=2)
-    async def gu_time_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self._send(interaction, "gu_time", "GU — Shift Time", colour_info())
 
 
 class ShiftListsView(discord.ui.View):
