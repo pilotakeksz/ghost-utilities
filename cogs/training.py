@@ -68,7 +68,7 @@ async def expire_session(message: discord.Message, session: dict, label: str) ->
     await asyncio.sleep(TIMEOUT_SECONDS)
 
     if session.get("locked"):
-        return  # Already started — nothing to do.
+        return  # Already started -nothing to do.
 
     session["locked"] = True
 
@@ -90,7 +90,7 @@ async def expire_session(message: discord.Message, session: dict, label: str) ->
 
     try:
         await message.channel.send(
-            f"\u23f0 The **{label}** hosted by {session['host'].mention} was **cancelled** — "
+            f"\u23f0 The **{label}** hosted by {session['host'].mention} was **cancelled** -"
             f"timed out after 30 minutes."
         )
     except discord.HTTPException:
@@ -174,7 +174,7 @@ class RideAlongView(discord.ui.View):
         rider_text = voters[0].mention if voters else "No rider."
         await interaction.channel.send(
             f"\U0001f6a8 The ride along hosted by {session['host'].mention} has **started**! "
-            f"Rider: {rider_text} — get in position."
+            f"Rider: {rider_text} -get in position."
         )
         await interaction.response.defer()
         active_sessions.pop(interaction.message.id, None)
@@ -263,7 +263,7 @@ class TrainingView(discord.ui.View):
 
         await interaction.channel.send(
             f"\U0001f3ab The training hosted by {session['host'].mention} has **started**! "
-            f"Attendees: {attendee_text} — get in position."
+            f"Attendees: {attendee_text} -get in position."
         )
         await interaction.response.defer()
         active_sessions.pop(interaction.message.id, None)
