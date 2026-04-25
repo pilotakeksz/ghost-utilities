@@ -50,7 +50,7 @@ PROMO_COOLDOWN_CAPTAIN_2ND     = 1458852963094233119
 PROMO_COOLDOWN_CAPTAIN_1ST     = 1317963241720250368
 PROMO_COOLDOWN_2ND_LT          = 1459727193377865850
 PROMO_COOLDOWN_1ST_LT          = 1317963243360223253
-PROMO_COOLDOWN_DEFAULT_DAYS    = 7
+PROMO_COOLDOWN_DEFAULT_DAYS    = 6
 
 WARN_THRESHOLD       = 45
 STRIKE_THRESHOLD     = 30
@@ -125,14 +125,14 @@ def colour_info() -> discord.Colour: return discord.Colour.blurple()
 def _rank_cooldown_days(roles: List[discord.Role]) -> int:
     role_ids = {r.id for r in roles}
     rank_map = [
-        (PROMO_COOLDOWN_SUPERINTENDENT, 42),
-        (PROMO_COOLDOWN_COLONEL,        35),
-        (PROMO_COOLDOWN_LT_COLONEL,     35),
-        (PROMO_COOLDOWN_MAJOR,          21),
-        (PROMO_COOLDOWN_CAPTAIN_2ND,    14),
-        (PROMO_COOLDOWN_CAPTAIN_1ST,    14),
-        (PROMO_COOLDOWN_2ND_LT,         14),
-        (PROMO_COOLDOWN_1ST_LT,         14),
+        (PROMO_COOLDOWN_SUPERINTENDENT, 41),
+        (PROMO_COOLDOWN_COLONEL,        34),
+        (PROMO_COOLDOWN_LT_COLONEL,     34),
+        (PROMO_COOLDOWN_MAJOR,          20),
+        (PROMO_COOLDOWN_CAPTAIN_2ND,    13),
+        (PROMO_COOLDOWN_CAPTAIN_1ST,    13),
+        (PROMO_COOLDOWN_2ND_LT,         13),
+        (PROMO_COOLDOWN_1ST_LT,         13),
     ]
     for role_id, days in rank_map:
         if role_id and role_id in role_ids:
