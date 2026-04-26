@@ -14,29 +14,30 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-# ─────────────────────────── SHARED DB ────────────────────────────────────────
+# ─────────────────────────── DB ───────────────────────────────────────────────
 
 WARRANTS_DB_PATH = "/opt/ghost-bot/warrants.db"
 
-# ─────────────────────────── GU CONFIG ────────────────────────────────────────
+# ─────────────────────────── SERVER A ─────────────────────────────────────────
 
 SERVER_A_GUILD_ID        = 1317959054177599559
 SERVER_A_WARRANT_CHANNEL = 1498041223166955620
 SERVER_A_PERSONNEL_ROLE  = 1400862387619500144
 SERVER_A_PING_ROLE       = 1318198109725134930
 
-# ─────────────────────────── SWAT CONFIG ──────────────────────────────────────
+# ─────────────────────────── SERVER B ─────────────────────────────────────────
 
 SERVER_B_GUILD_ID        = 1310032085183893566
 SERVER_B_WARRANT_CHANNEL = 1492253558773518458
 SERVER_B_PERSONNEL_ROLE  = 1310376351470977148
 SERVER_B_PING_ROLE       = 1315403773304242178
 
-# ─────────────────────────── SHARED ASSETS ────────────────────────────────────
+# ─────────────────────────── ASSETS ───────────────────────────────────────────
 
 FHP_LOGO = "https://upload.wikimedia.org/wikipedia/commons/thumb/6/6a/Florida_Highway_Patrol_logo.svg/1200px-Florida_Highway_Patrol_logo.svg.png"
 BOTTOM_IMAGE = "https://media.discordapp.net/attachments/1403360987096027268/1408449383925809262/image.png"
 FOOTER_ICON = FHP_LOGO
+
 FALLBACK_AVATAR = "https://tr.rbxcdn.com/30DAY-AvatarHeadshot-placeholder/150/150/AvatarHeadshot/Png"
 
 # ─────────────────────────── HELPERS ──────────────────────────────────────────
@@ -52,32 +53,39 @@ def _base_embed(colour: discord.Colour) -> discord.Embed:
     return e
 
 
+# ─────────────────────────── ROBLOX ───────────────────────────────────────────
+
 async def _get_roblox_headshot(username: str) -> str:
     try:
-        async with aiohttp.ClientSession() as session:
+        timeout = aiohttp.ClientTimeout(total=10)
+
+        async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.post(
                 "https://users.roblox.com/v1/usernames/users",
                 json={"usernames": [username], "excludeBannedUsers": False},
             ) as r:
                 if r.status != 200:
                     return FALLBACK_AVATAR
+
                 data = await r.json()
                 if not data.get("data"):
                     return FALLBACK_AVATAR
+
                 user_id = data["data"][0]["id"]
 
             async with session.get(
                 f"https://thumbnails.roblox.com/v1/users/avatar-headshot"
                 f"?userIds={user_id}&size=420x420&format=Png&isCircular=false",
             ) as r:
-                d = await r.json()
-                return d["data"][0]["imageUrl"]
+                data = await r.json()
+                return data["data"][0]["imageUrl"]
+
     except Exception as e:
         print(f"[warrants] Roblox error: {e}")
         return FALLBACK_AVATAR
 
 
-# ─────────────────────────── SERVER CONFIG ────────────────────────────────────
+# ─────────────────────────── CONFIG ───────────────────────────────────────────
 
 def _server_config(guild_id: int) -> tuple[int, int, int] | None:
     if guild_id == SERVER_A_GUILD_ID:
@@ -116,14 +124,8 @@ async def _insert_warrant(warrant_id, suspect, charges, vehicle_info, last_locat
         await db.execute("""
             INSERT INTO warrants VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', NULL, NULL, NULL, NULL)
         """, (
-            warrant_id,
-            suspect,
-            charges,
-            vehicle_info,
-            last_location,
-            issued_by,
-            _utcnow_str(),
-            headshot_url
+            warrant_id, suspect, charges, vehicle_info,
+            last_location, issued_by, _utcnow_str(), headshot_url
         ))
         await db.commit()
 
@@ -159,7 +161,6 @@ async def _set_message_ids(warrant_id: str, a: int | None, b: int | None):
 # ─────────────────────────── EMBED ────────────────────────────────────────────
 
 def _build_warrant_embed(warrant, status=None, closed_by=None, closed_at=None):
-
     colour = discord.Colour.red() if warrant["status"] == "active" else discord.Colour.green()
 
     e = _base_embed(colour)
@@ -183,15 +184,12 @@ def _build_warrant_embed(warrant, status=None, closed_by=None, closed_at=None):
     if closed_by:
         e.add_field(name="Executed By", value=closed_by, inline=False)
 
-        # Convert stored string to Discord timestamp
         try:
             dt = datetime.strptime(closed_at, "%d/%m/%Y %H:%M")
             unix = int(dt.replace(tzinfo=timezone.utc).timestamp())
-            ts = f"<t:{unix}:F>"
+            e.add_field(name="Executed At", value=f"<t:{unix}:F>", inline=False)
         except:
-            ts = closed_at
-
-        e.add_field(name="Executed At", value=ts, inline=False)
+            e.add_field(name="Executed At", value=closed_at, inline=False)
 
     return e
 
@@ -231,49 +229,64 @@ class WarrantView(discord.ui.View):
         await self._close(interaction, "voided")
 
     async def _close(self, interaction, status):
-        await interaction.response.defer(ephemeral=True)
+        try:
+            await interaction.response.defer(ephemeral=True)
 
-        warrant = await _get_warrant(self.warrant_id)
-        if not warrant:
-            return await interaction.followup.send("Not found", ephemeral=True)
+            warrant = await _get_warrant(self.warrant_id)
+            if not warrant:
+                return await interaction.followup.send("Not found", ephemeral=True)
 
-        await _close_warrant(self.warrant_id, interaction.user.display_name, status)
+            await _close_warrant(self.warrant_id, interaction.user.display_name, status)
 
-        updated = await _get_warrant(self.warrant_id)
+            updated = await _get_warrant(self.warrant_id)
 
-        embed = _build_warrant_embed(
-            updated,
-            status=status,
-            closed_by=interaction.user.display_name,
-            closed_at=_utcnow_str()
-        )
+            embed = _build_warrant_embed(
+                updated,
+                status=status,
+                closed_by=interaction.user.display_name,
+                closed_at=_utcnow_str()
+            )
 
-        disabled_view = WarrantView(self.warrant_id, disabled=True)
+            disabled_view = WarrantView(self.warrant_id, disabled=True)
 
-        await _mirror_edit(interaction.client, updated, embed, disabled_view)
+            await _mirror_edit(interaction.client, updated, embed, disabled_view)
 
-        await interaction.followup.send(f"{status.title()} complete.", ephemeral=True)
+            await interaction.followup.send(f"{status.title()} complete.", ephemeral=True)
+
+        except Exception as e:
+            print(f"[warrants] close error: {e}")
+            try:
+                await interaction.followup.send("Error processing action.", ephemeral=True)
+            except:
+                pass
 
 
 # ─────────────────────────── POSTING ──────────────────────────────────────────
 
 async def _post_to_channel(bot, guild_id, channel_id, embed, view, ping_role_id):
-    guild = bot.get_guild(guild_id)
-    if not guild:
+    try:
+        guild = discord.utils.get(bot.guilds, id=guild_id)
+        if not guild:
+            print(f"[warrants] Missing guild {guild_id}")
+            return None
+
+        channel = guild.get_channel(channel_id)
+        if not isinstance(channel, discord.TextChannel):
+            print(f"[warrants] Missing channel {channel_id}")
+            return None
+
+        content = f"<@&{ping_role_id}>" if ping_role_id else None
+
+        return await channel.send(
+            content=content,
+            embed=embed,
+            view=view,
+            allowed_mentions=discord.AllowedMentions(roles=True),
+        )
+
+    except Exception as e:
+        print(f"[warrants] post error: {e}")
         return None
-
-    channel = guild.get_channel(channel_id)
-    if not isinstance(channel, discord.TextChannel):
-        return None
-
-    content = f"<@&{ping_role_id}>" if ping_role_id else None
-
-    return await channel.send(
-        content=content,
-        embed=embed,
-        view=view,
-        allowed_mentions=discord.AllowedMentions(roles=True),
-    )
 
 
 async def _mirror_edit(bot, warrant, embed, view):
@@ -285,7 +298,10 @@ async def _mirror_edit(bot, warrant, embed, view):
         if not msg_id:
             continue
 
-        guild = bot.get_guild(gid)
+        guild = discord.utils.get(bot.guilds, id=gid)
+        if not guild:
+            continue
+
         channel = guild.get_channel(ch)
         if not channel:
             continue
@@ -311,46 +327,55 @@ class WarrantsCog(commands.Cog):
                             vehicle_info: Optional[str] = None,
                             last_location: Optional[str] = None):
 
-        cfg = _server_config(interaction.guild.id)
-        if not cfg:
-            return await interaction.response.send_message("No permission", ephemeral=True)
+        try:
+            cfg = _server_config(interaction.guild.id)
+            if not cfg:
+                return await interaction.response.send_message("No permission", ephemeral=True)
 
-        await interaction.response.defer(ephemeral=True)
+            await interaction.response.defer(ephemeral=True)
 
-        warrant_id = uuid.uuid4().hex[:10].upper()
-        headshot = await _get_roblox_headshot(suspect)
+            warrant_id = uuid.uuid4().hex[:10].upper()
 
-        await _insert_warrant(
-            warrant_id, suspect, charges,
-            vehicle_info, last_location,
-            interaction.user.display_name,
-            headshot
-        )
+            headshot = await _get_roblox_headshot(suspect)
 
-        warrant = await _get_warrant(warrant_id)
-        embed = _build_warrant_embed(warrant)
+            await _insert_warrant(
+                warrant_id, suspect, charges,
+                vehicle_info, last_location,
+                interaction.user.display_name,
+                headshot
+            )
 
-        view = WarrantView(warrant_id)
-        self.bot.add_view(view)
+            warrant = await _get_warrant(warrant_id)
+            embed = _build_warrant_embed(warrant)
 
-        cfg_a = _server_config(SERVER_A_GUILD_ID)
-        cfg_b = _server_config(SERVER_B_GUILD_ID)
+            view = WarrantView(warrant_id)
+            self.bot.add_view(view)
 
-        msg_a = await _post_to_channel(self.bot, SERVER_A_GUILD_ID,
-                                       SERVER_A_WARRANT_CHANNEL,
-                                       embed, view, cfg_a[2])
+            cfg_a = _server_config(SERVER_A_GUILD_ID)
+            cfg_b = _server_config(SERVER_B_GUILD_ID)
 
-        msg_b = await _post_to_channel(self.bot, SERVER_B_GUILD_ID,
-                                       SERVER_B_WARRANT_CHANNEL,
-                                       embed, view, cfg_b[2])
+            msg_a = await _post_to_channel(self.bot, SERVER_A_GUILD_ID,
+                                           SERVER_A_WARRANT_CHANNEL,
+                                           embed, view, cfg_a[2])
 
-        await _set_message_ids(
-            warrant_id,
-            msg_a.id if msg_a else None,
-            msg_b.id if msg_b else None
-        )
+            msg_b = await _post_to_channel(self.bot, SERVER_B_GUILD_ID,
+                                           SERVER_B_WARRANT_CHANNEL,
+                                           embed, view, cfg_b[2])
 
-        await interaction.followup.send(f"Issued `{warrant_id}`", ephemeral=True)
+            await _set_message_ids(
+                warrant_id,
+                msg_a.id if msg_a else None,
+                msg_b.id if msg_b else None
+            )
+
+            await interaction.followup.send(f"Issued `{warrant_id}`", ephemeral=True)
+
+        except Exception as e:
+            print(f"[warrants] issue error: {e}")
+            try:
+                await interaction.followup.send("Error issuing warrant.", ephemeral=True)
+            except:
+                pass
 
 
 async def setup(bot: commands.Bot):
