@@ -36,7 +36,7 @@ from discord.ext import commands
 
 # ─────────────────────────── SHARED DB ────────────────────────────────────────
 
-WARRANTS_DB_PATH = "/shared/ghost_unit/warrants.db"  # ← absolute path on disk
+WARRANTS_DB_PATH = "/opt/ghost-bot/warrants.db"  # ← absolute path on disk
 
 # ─────────────────────────── SERVER A CONFIG ──────────────────────────────────
 # Fill these in for the first server / first bot.
