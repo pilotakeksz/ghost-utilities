@@ -35,7 +35,7 @@ SERVER_B_PING_ROLE       = 1315403773304242178
 # ─────────────────────────── ASSETS ───────────────────────────────────────────
 
 FHP_LOGO = "https://upload.wikimedia.org/wikipedia/commons/thumb/6/6a/Florida_Highway_Patrol_logo.svg/1200px-Florida_Highway_Patrol_logo.svg.png"
-BOTTOM_IMAGE = "https://media.discordapp.net/attachments/1403360987096027268/1408449383925809262/image.png"
+BOTTOM_IMAGE = "https://media.discordapp.net/attachments/1403360987096027268/1498068323806482472/image.png?ex=69efd059&is=69ee7ed9&hm=4caf6c53a9f70eff263b542cf5480f5a79cb2723b2c8c7d5f03e7346538196da&=&format=webp&quality=lossless&width=1867&height=70"
 FOOTER_ICON = FHP_LOGO
 
 FALLBACK_AVATAR = "https://tr.rbxcdn.com/30DAY-AvatarHeadshot-placeholder/150/150/AvatarHeadshot/Png"
