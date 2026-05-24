@@ -14,7 +14,6 @@ from typing import Optional
 import re
 
 
-
 load_dotenv(".env")
 load_dotenv(".env.token")
 
@@ -128,7 +127,6 @@ async def log_command_use(kind: str, user: discord.abc.User, guild: Optional[dis
 
 @bot.event
 async def on_command(ctx: commands.Context):
-    """Log legacy prefix commands invoked via `!` prefix."""
     try:
         if ctx.author and getattr(ctx.author, "bot", False):
             return
@@ -426,9 +424,7 @@ else:
     TUNA_ADMIN_IDS = [BOT_OWNER_ID]
 
 
-
 async def _get_cog_directories() -> list:
-    """Return list of cog directory names as used in startup (falls back to ['cogs'])."""
     env_cogs_path = os.path.join(os.path.dirname(__file__), ".env.cogs")
     cog_directories = []
     if os.path.exists(env_cogs_path):
@@ -485,7 +481,6 @@ async def _run_git_pull(repo_path: str) -> tuple:
 
 
 async def _reload_all_cogs() -> dict:
-    """Attempt to reload or load all cogs; return dict with 'reloaded', 'loaded', 'failed'."""
     results = {"reloaded": [], "loaded": [], "failed": []}
     cogs = await _gather_cog_list()
     for cog in cogs:

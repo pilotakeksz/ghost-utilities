@@ -1,7 +1,3 @@
-"""
-warrants.py — FHP Ghost Unit cross-server warrant system.
-"""
-
 from __future__ import annotations
 
 import uuid
@@ -14,25 +10,21 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-# ─────────────────────────── DB ───────────────────────────────────────────────
 
 WARRANTS_DB_PATH = "/opt/ghost-bot/warrants.db"
 
-# ─────────────────────────── SERVER A ─────────────────────────────────────────
 
 SERVER_A_GUILD_ID        = 1317959054177599559
 SERVER_A_WARRANT_CHANNEL = 1498041223166955620
 SERVER_A_PERSONNEL_ROLE  = 1400862387619500144
 SERVER_A_PING_ROLE       = 1318198109725134930
 
-# ─────────────────────────── SERVER B ─────────────────────────────────────────
 
 SERVER_B_GUILD_ID        = 1310032085183893566
 SERVER_B_WARRANT_CHANNEL = 1492253558773518458
 SERVER_B_PERSONNEL_ROLE  = 1310376351470977148
 SERVER_B_PING_ROLE       = 1315403773304242178
 
-# ─────────────────────────── ASSETS ───────────────────────────────────────────
 
 FHP_LOGO = "https://upload.wikimedia.org/wikipedia/commons/thumb/6/6a/Florida_Highway_Patrol_logo.svg/1200px-Florida_Highway_Patrol_logo.svg.png"
 BOTTOM_IMAGE = "https://media.discordapp.net/attachments/1403360987096027268/1498068323806482472/image.png?ex=69efd059&is=69ee7ed9&hm=4caf6c53a9f70eff263b542cf5480f5a79cb2723b2c8c7d5f03e7346538196da&=&format=webp&quality=lossless&width=1867&height=70"
@@ -40,7 +32,6 @@ FOOTER_ICON = FHP_LOGO
 
 FALLBACK_AVATAR = "https://tr.rbxcdn.com/30DAY-AvatarHeadshot-placeholder/150/150/AvatarHeadshot/Png"
 
-# ─────────────────────────── HELPERS ──────────────────────────────────────────
 
 def _utcnow_str() -> str:
     return datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M")
@@ -52,8 +43,6 @@ def _base_embed(colour: discord.Colour) -> discord.Embed:
     e.set_footer(text=f"Ghost Unit Utilities • {_utcnow_str()}", icon_url=FOOTER_ICON)
     return e
 
-
-# ─────────────────────────── ROBLOX ───────────────────────────────────────────
 
 async def _get_roblox_headshot(username: str) -> str:
     try:
@@ -85,8 +74,6 @@ async def _get_roblox_headshot(username: str) -> str:
         return FALLBACK_AVATAR
 
 
-# ─────────────────────────── CONFIG ───────────────────────────────────────────
-
 def _server_config(guild_id: int) -> tuple[int, int, int] | None:
     if guild_id == SERVER_A_GUILD_ID:
         return SERVER_A_WARRANT_CHANNEL, SERVER_A_PERSONNEL_ROLE, SERVER_A_PING_ROLE
@@ -94,8 +81,6 @@ def _server_config(guild_id: int) -> tuple[int, int, int] | None:
         return SERVER_B_WARRANT_CHANNEL, SERVER_B_PERSONNEL_ROLE, SERVER_B_PING_ROLE
     return None
 
-
-# ─────────────────────────── DATABASE ─────────────────────────────────────────
 
 async def _init_db():
     async with aiosqlite.connect(WARRANTS_DB_PATH) as db:
@@ -115,14 +100,7 @@ async def _init_db():
             msg_id_a TEXT,
             msg_id_b TEXT
         )
-        """)
-        await db.commit()
-
-
-async def _insert_warrant(warrant_id, suspect, charges, vehicle_info, last_location, issued_by, headshot_url):
-    async with aiosqlite.connect(WARRANTS_DB_PATH) as db:
-        await db.execute("""
-            INSERT INTO warrants VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', NULL, NULL, NULL, NULL)
+                    INSERT INTO warrants VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', NULL, NULL, NULL, NULL)
         """, (
             warrant_id, suspect, charges, vehicle_info,
             last_location, issued_by, _utcnow_str(), headshot_url
@@ -146,19 +124,10 @@ async def _close_warrant(warrant_id: str, user: str, status: str):
             UPDATE warrants
             SET status=?, closed_by=?, closed_at=?
             WHERE warrant_id=?
-        """, (status, user, _utcnow_str(), warrant_id))
-        await db.commit()
-
-
-async def _set_message_ids(warrant_id: str, a: int | None, b: int | None):
-    async with aiosqlite.connect(WARRANTS_DB_PATH) as db:
-        await db.execute("""
-            UPDATE warrants SET msg_id_a=?, msg_id_b=? WHERE warrant_id=?
+                    UPDATE warrants SET msg_id_a=?, msg_id_b=? WHERE warrant_id=?
         """, (str(a) if a else None, str(b) if b else None, warrant_id))
         await db.commit()
 
-
-# ─────────────────────────── EMBED ────────────────────────────────────────────
 
 def _build_warrant_embed(warrant, status=None, closed_by=None, closed_at=None):
     colour = discord.Colour.red() if warrant["status"] == "active" else discord.Colour.green()
@@ -193,8 +162,6 @@ def _build_warrant_embed(warrant, status=None, closed_by=None, closed_at=None):
 
     return e
 
-
-# ─────────────────────────── VIEW ─────────────────────────────────────────────
 
 class WarrantView(discord.ui.View):
     def __init__(self, warrant_id: str, disabled=False):
@@ -261,8 +228,6 @@ class WarrantView(discord.ui.View):
                 pass
 
 
-# ─────────────────────────── POSTING ──────────────────────────────────────────
-
 async def _post_to_channel(bot, guild_id, channel_id, embed, view, ping_role_id):
     try:
         guild = discord.utils.get(bot.guilds, id=guild_id)
@@ -312,8 +277,6 @@ async def _mirror_edit(bot, warrant, embed, view):
         except:
             pass
 
-
-# ─────────────────────────── COG ──────────────────────────────────────────────
 
 class WarrantsCog(commands.Cog):
     def __init__(self, bot):

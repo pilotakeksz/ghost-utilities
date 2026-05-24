@@ -26,7 +26,7 @@ ROLE_PROBATION       = 1317963256484069387
 LOG_CHANNEL_ID             = 1398812728541577247
 MSG_COUNT_CHANNEL_ID       = 1318199799085928458
 PROMOTIONS_CHANNEL_ID      = 1317963343524270192
-INFRACTIONS_CHANNEL_ID     = 1317963346326323250   # pings here = consecutive miss events
+INFRACTIONS_CHANNEL_ID     = 1317963346326323250
 ALLOWED_SHIFT_CHANNEL_ID   = 1318174456744775703
 ALLOWED_SHIFT_CATEGORIES   = [
     1398675655771816187
@@ -67,7 +67,7 @@ STATE_FILE  = os.path.join(DATA_DIR, "shift_state.json")
 RECORDS_FILE = os.path.join(DATA_DIR, "shift_records.json")
 META_FILE   = os.path.join(DATA_DIR, "meta.json")
 MISSES_FILE  = os.path.join(DATA_DIR, "shift_misses.json")
-ARCHIVE_FILE = os.path.join(DATA_DIR, "shift_archive.json")  # previous wave records
+ARCHIVE_FILE = os.path.join(DATA_DIR, "shift_archive.json")
 
 ACTIVE_LOAS_FILE = os.path.join(DATA_DIR, "active_loas.json")
 
@@ -147,7 +147,6 @@ class Store:
         self.meta: Dict[str, Any]    = {}
         self.misses: Dict[str, int]  = {}
         self.miss_wave_ts: Dict[str, int] = {}
-        # archive: list of {"wave_reset_ts": int, "records": [...], "label": str}
         self.archive: List[Dict[str, Any]] = []
         self.load()
 
@@ -181,8 +180,6 @@ class Store:
         self.meta.setdefault("admin_cooldowns", {})
         self.meta.setdefault("excuses", {})
         self.meta.setdefault("last_friday_quota_reminder", "")
-        # infraction_ping_ts: {user_id_str: last_unix_ts when pinged in INFRACTIONS_CHANNEL_ID}
-        # Used to deduplicate: only one miss per calendar week per user.
         self.meta.setdefault("infraction_ping_ts", {})
 
     def save(self):
@@ -267,7 +264,6 @@ class Store:
         return False
 
     def _records_for_wave(self, wave_index: Optional[int] = None) -> List[Dict[str, Any]]:
-        """Get records for current wave (None) or archive index (0=most recent past wave)."""
         if wave_index is None:
             return self.records
         if not self.archive or wave_index >= len(self.archive):
@@ -292,7 +288,6 @@ class Store:
         return total
 
     def total_gu_equiv(self, user_id: int, wave_index: Optional[int] = None) -> int:
-        """All shift types combined (GU+SRT+HSPU). Used for GU quota checks."""
         return (
             self.total_for_user(user_id, SHIFT_TYPE_NORMAL, wave_index) +
             self.total_for_user(user_id, SHIFT_TYPE_SRT,    wave_index) +
@@ -329,7 +324,6 @@ class Store:
         return _rank_cooldown_days(member_roles)
 
     def promo_cooldown_remaining(self, user_id: int, member_roles: List[discord.Role]) -> Tuple[int, int]:
-        """Return (cooldown_days, remaining_seconds). remaining == 0 means eligible."""
         cooldown_days = self.promo_cooldown_days(user_id, member_roles)
         last_ts = self.meta.get("last_promotions", {}).get(str(user_id), 0)
         if last_ts == 0:
@@ -342,7 +336,6 @@ class Store:
         return cooldown_days, max(0, total_secs - elapsed)
 
     def can_be_promoted(self, user_id: int, member_roles: List[discord.Role]) -> bool:
-        """Return True if member is off cooldown (or was never promoted)."""
         _, remaining = self.promo_cooldown_remaining(user_id, member_roles)
         return remaining == 0
 
@@ -375,24 +368,16 @@ class Store:
         return self.misses.get(str(user_id), 0)
 
     def record_infraction_ping(self, user_id: int) -> bool:
-        """
-        Called when a user is pinged in INFRACTIONS_CHANNEL_ID.
-        Increments consecutive miss counter, deduplicated to once per ISO calendar week.
-        Returns True if a new miss was recorded, False if already recorded this week.
-        All data is persisted to disk immediately.
-        """
         now = utcnow()
-        current_week = now.isocalendar()[:2]  # (year, week_number)
+        current_week = now.isocalendar()[:2]
 
         last_ping_ts = self.meta["infraction_ping_ts"].get(str(user_id))
         if last_ping_ts is not None:
             last_dt = int_to_ts(last_ping_ts)
             last_week = last_dt.isocalendar()[:2]
             if last_week == current_week:
-                # Already recorded a miss for this week; skip.
                 return False
 
-        # New miss for this week.
         self.misses[str(user_id)] = self.get_misses(user_id) + 1
         self.miss_wave_ts[str(user_id)] = self.meta.get("last_reset_ts", ts_to_int(now))
         self.meta["infraction_ping_ts"][str(user_id)] = ts_to_int(now)
@@ -400,9 +385,6 @@ class Store:
         return True
 
     def increment_miss(self, user_id: int):
-        """Legacy: direct increment without dedup. Used during void_all for members who
-        were not pinged in the infractions channel but still missed quota.
-        Prefer record_infraction_ping for channel-driven misses."""
         self.misses[str(user_id)] = self.get_misses(user_id) + 1
         current_reset_ts = self.meta.get("last_reset_ts", 0)
         self.miss_wave_ts[str(user_id)] = current_reset_ts
@@ -416,7 +398,6 @@ class Store:
         if str(user_id) in self.miss_wave_ts:
             del self.miss_wave_ts[str(user_id)]
             changed = True
-        # Also clear the per-week dedup timestamp so they start fresh.
         if str(user_id) in self.meta.get("infraction_ping_ts", {}):
             del self.meta["infraction_ping_ts"][str(user_id)]
             changed = True
@@ -424,13 +405,12 @@ class Store:
             self.save()
 
     def archive_wave(self, label: str = ""):
-        """Save current records to archive before reset. Call before void_all."""
         entry = {
             "wave_reset_ts": self.meta.get("last_reset_ts", ts_to_int(utcnow())),
             "label": label or int_to_ts(self.meta.get("last_reset_ts", ts_to_int(utcnow()))).strftime("%Y-%m-%d"),
             "records": list(self.records),
         }
-        self.archive.insert(0, entry)  # newest first
+        self.archive.insert(0, entry)
         self.archive = self.archive[:12]
         self.save()
 
@@ -979,9 +959,6 @@ class ShiftCog(commands.Cog):
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
-        # ------------------------------------------------------------------ #
-        # 1. PROMOTIONS channel — track last promotion timestamp per user.    #
-        # ------------------------------------------------------------------ #
         if message.channel.id == PROMOTIONS_CHANNEL_ID:
             if not message.author.bot and message.mentions:
                 timestamp = ts_to_int(utcnow())
@@ -1020,13 +997,8 @@ class ShiftCog(commands.Cog):
                                 print(f"Failed to DM cooldown info to {user.display_name}: {e}")
                     if updated:
                         self.store.save()
-            return  # done with this channel
+            return
 
-        # ------------------------------------------------------------------ #
-        # 2. INFRACTIONS channel — each ping = one consecutive miss event.   #
-        #    Deduplicated to once per ISO calendar week per user.             #
-        #    Data is persisted to disk immediately via record_infraction_ping.#
-        # ------------------------------------------------------------------ #
         if message.channel.id == INFRACTIONS_CHANNEL_ID:
             if message.author.bot or not message.mentions:
                 return
@@ -1286,16 +1258,13 @@ class ShiftCog(commands.Cog):
             misses = self.store.get_misses(member.id)
 
             if quota_minutes > 0 and gu_secs < quota_minutes * 60:
-                # Missed quota — slot into infraction tier by consecutive miss count.
                 if misses >= 3:
                     infractions["demotions"].append((member, misses))
                 elif misses == 2:
                     infractions["strikes"].append((member, misses))
                 elif misses >= 1:
                     infractions["warns"].append((member, misses))
-                # misses == 0: quota missed but never pinged yet — not listed.
             else:
-                # Quota met — off promotion cooldown and enough time for tier.
                 if not self.store.can_be_promoted(member.id, member.roles):
                     continue
                 on_probation = ROLE_PROBATION in mids
@@ -1783,7 +1752,6 @@ class ShiftCog(commands.Cog):
                 await interaction.channel.send("Confirmation failed. No shifts voided.")
                 return
 
-            # Archive current wave before reset.
             self.store.archive_wave()
 
             ongoing = len(self.store.state)
@@ -1792,7 +1760,6 @@ class ShiftCog(commands.Cog):
             self.store.meta["last_reset_ts"]    = ts_to_int(utcnow())
             self.store.meta["infractions"]      = {}
             self.store.meta["last_promotions"]  = {}
-            # Clear per-week ping dedup so next week's pings register fresh.
             self.store.meta["infraction_ping_ts"] = {}
             self.store.save()
 
@@ -1802,7 +1769,6 @@ class ShiftCog(commands.Cog):
                     mids = {r.id for r in member.roles}
                     if any(r.id in TRAINEE_ROLES for r in member.roles):
                         continue
-                    # Use the just-archived wave (index 0) for quota check.
                     gu_secs       = self.store.total_gu_equiv(member.id, wave_index=0)
                     quota_minutes = await self._get_quota(member)
                     exempt = (
@@ -1813,10 +1779,6 @@ class ShiftCog(commands.Cog):
                     if exempt:
                         self.store.clear_misses(member.id)
                     elif quota_minutes > 0 and gu_secs < quota_minutes * 60:
-                        # Only increment here if they weren't already pinged in the
-                        # infractions channel this wave (avoid double-counting).
-                        # Since we cleared infraction_ping_ts above, this is a fallback
-                        # for members who missed quota but were never pinged.
                         self.store.increment_miss(member.id)
                     else:
                         self.store.clear_misses(member.id)
@@ -1897,7 +1859,6 @@ class ShiftCog(commands.Cog):
 
     @commands.command(name="cooldown", aliases=["cd"])
     async def cooldown_prefix(self, ctx: commands.Context, member: Optional[discord.Member] = None):
-        """Show promotion cooldown status. Usage: !cooldown [@member]"""
         member = member or ctx.author
         cooldown_days, remaining = self._calculate_member_cooldown(member)
         last_ts = self.store.meta["last_promotions"].get(str(member.id), 0)
