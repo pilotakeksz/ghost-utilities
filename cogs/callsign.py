@@ -1,39 +1,3 @@
-"""
-callsign.py — FHP Ghost Unit callsign management cog.
-
-Entry points
-------------
-  !cs              — opens the full panel (ephemeral embed + buttons)
-  /callsign        — same panel as slash command
-
-Panel buttons (all members with personnel role):
-  • My Callsign       — show your own callsign
-  • Request Callsign  — modal + "Assign Lowest" button
-  • Browse / List     — all callsigns grouped by section
-  • Find by Callsign  — type a number, see who holds it
-  • [Admin Menu]      — shown only to ADMIN_ID
-
-Admin menu buttons:
-  • Assign Callsign   — modal: user ID + number
-  • Remove Callsign   — modal: user ID
-  • View All          — same as Browse but includes unmatched
-  • Refresh DB        — reads display names, no new assignments
-
-Automatic actions:
-  • on_message in promotions channel → remove callsign if section changed, DM member
-  • on_member_update → remove callsign if personnel role lost, DM member
-
-Callsign ranges:
-  High Command      GU-001 – GU-006
-  Senior High Rank  GU-010 – GU-019
-  High Rank         GU-020 – GU-035
-  Sergeants Program GU-036 – GU-060
-  Low Rank + Cadet  GU-061 – GU-250
-
-Storage:
-  data/callsigns.json          {str(user_id): "GU-XXX"}
-  data/callsign_sections.json  {str(user_id): section_label}
-"""
 
 from __future__ import annotations
 import json, os, re, asyncio
@@ -42,7 +6,6 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-# ─────────────────────────── CONFIG ───────────────────────────────────────────
 
 ADMIN_ID              = 840949634071658507
 ROLE_PERSONNEL        = 1317963289518542959
@@ -68,7 +31,6 @@ DATA_DIR      = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "
 CALLSIGN_FILE = os.path.join(DATA_DIR, "callsigns.json")
 SECTIONS_FILE = os.path.join(DATA_DIR, "callsign_sections.json")
 
-# ─────────────────────────── PERSISTENCE ──────────────────────────────────────
 
 def _load() -> dict[str, str]:
     os.makedirs(DATA_DIR, exist_ok=True)
@@ -88,7 +50,6 @@ def _save_secs(data: dict[str, str]):
     os.makedirs(DATA_DIR, exist_ok=True)
     with open(SECTIONS_FILE, "w", encoding="utf-8") as f: json.dump(data, f, indent=2)
 
-# ─────────────────────────── PURE HELPERS ─────────────────────────────────────
 
 _CS_RE     = re.compile(r"(?:GU|\U0001D4A2\U0001D4B0)-(\d{3})")
 _LOA_RE    = re.compile(r"(?i)^loa\s*\|\s*")
@@ -137,7 +98,6 @@ def _section_for_num(num: int) -> Optional[str]:
         if lo <= num <= hi: return lbl
     return None
 
-# ── Display name helpers ───────────────────────────────────────────────────────
 
 def _decompose(dn: str) -> tuple[str, str, str]:
     dn = dn.strip()
@@ -175,7 +135,6 @@ async def _update_nick(member: discord.Member, new_cs: Optional[str]):
     except Exception as e:
         print(f"[callsign] nick error {member}: {e}")
 
-# ── Shared embed builder for the list ─────────────────────────────────────────
 
 def _build_list_embed(data: dict[str, str]) -> discord.Embed:
     """Build a sectioned callsign list embed."""
@@ -209,14 +168,12 @@ def _emb(title: str = "", description: str = "", colour: discord.Colour = discor
     e.set_image(url=PANEL_IMAGE_URL)
     return e
 
-# ─────────────────────────── COG ──────────────────────────────────────────────
 
 class CallsignCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot   = bot
         self._lock = asyncio.Lock()
 
-    # ── Logging ───────────────────────────────────────────────────────────────
 
     async def _log(self, guild: Optional[discord.Guild], msg: str):
         print(f"[callsign] {msg}")
@@ -226,7 +183,6 @@ class CallsignCog(commands.Cog):
             try: await ch.send(embed=_emb(description=msg))
             except Exception: pass
 
-    # ── Core write ops ────────────────────────────────────────────────────────
 
     async def _assign(self, guild: discord.Guild, target: discord.Member, num: int,
                       actor: discord.Member, *, update_nick: bool = True) -> tuple[bool, str]:
@@ -275,7 +231,6 @@ class CallsignCog(commands.Cog):
         await self._log(guild, f"📋 {member.mention} self-requested `{cs}`" + (f" (was `{old}`)" if old else "") + ".")
         return True, cs
 
-    # ── Shared panel builder ──────────────────────────────────────────────────
 
     def _panel_embed(self, member: discord.Member) -> discord.Embed:
         data    = _load()
@@ -302,7 +257,6 @@ class CallsignCog(commands.Cog):
         else:
             await ctx_or_interaction.reply(embed=emb, view=view, ephemeral=True, mention_author=False)
 
-    # ── !cs ───────────────────────────────────────────────────────────────────
 
     @commands.command(name="cs", aliases=["callsign"])
     async def cs_cmd(self, ctx: commands.Context):
@@ -314,7 +268,6 @@ class CallsignCog(commands.Cog):
             await ctx.reply("You don't have the required role.", mention_author=False); return
         await self._send_panel(ctx, member)
 
-    # ── /callsign ─────────────────────────────────────────────────────────────
 
     @app_commands.command(name="callsign", description="Open the callsign management panel.")
     async def callsign_slash(self, interaction: discord.Interaction):
@@ -325,7 +278,6 @@ class CallsignCog(commands.Cog):
             await interaction.response.send_message("You don't have the required role.", ephemeral=True); return
         await self._send_panel(interaction, member)
 
-    # ── !callsign_refresh (admin only, prefix only) ───────────────────────────
 
     @commands.command(name="callsign_refresh")
     async def callsign_refresh(self, ctx: commands.Context):
@@ -370,7 +322,6 @@ class CallsignCog(commands.Cog):
         await msg.edit(content="\n".join(lines))
         await self._log(ctx.guild, f"🔄 {ctx.author.mention} ran callsign_refresh. {len(found)} read, {len(no_cs)} no callsign, {len(conflicts)} conflicts.")
 
-    # ── Promotions channel listener ───────────────────────────────────────────
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
@@ -393,7 +344,6 @@ class CallsignCog(commands.Cog):
                     dm=(f"Your callsign **{cs}** has been removed because you were promoted to "
                         f"**{new_sec[0]}**.\n\nUse `/callsign` or `!cs` to request a new one in your section's range."))
 
-    # ── Personnel role removed ────────────────────────────────────────────────
 
     @commands.Cog.listener()
     async def on_member_update(self, before: discord.Member, after: discord.Member):
@@ -404,8 +354,6 @@ class CallsignCog(commands.Cog):
                     dm=(f"Your callsign **{cs}** has been removed because you no longer hold "
                         f"the personnel role in FHP Ghost Unit.\n\nIf this is an error, contact an administrator."))
 
-
-# ─────────────────────────── MAIN PANEL VIEW ──────────────────────────────────
 
 class CallsignPanelView(discord.ui.View):
     def __init__(self, cog: CallsignCog, member: discord.Member):
@@ -465,8 +413,6 @@ class CallsignPanelView(discord.ui.View):
         await interaction.response.send_modal(FindByCallsignModal(self.cog))
 
 
-# ─────────────────────────── REQUEST VIEW ─────────────────────────────────────
-
 class CallsignRequestView(discord.ui.View):
     def __init__(self, cog: CallsignCog, section: tuple[str, int, int], owner_id: int):
         super().__init__(timeout=120)
@@ -494,8 +440,6 @@ class CallsignRequestView(discord.ui.View):
             embed=_emb(title="Callsign Assigned", description=f"✅ You have been assigned **{result}** (lowest free in {label}).", colour=discord.Colour.brand_green()),
             ephemeral=True)
 
-
-# ─────────────────────────── ADMIN MENU ───────────────────────────────────────
 
 class AdminMenuButton(discord.ui.Button):
     def __init__(self, cog: CallsignCog):
@@ -560,8 +504,6 @@ class CallsignAdminView(discord.ui.View):
         await interaction.followup.send("\n".join(lines), ephemeral=True)
         await self.cog._log(guild, f"🔄 {interaction.user.mention} ran DB refresh via admin menu.")
 
-
-# ─────────────────────────── MODALS ───────────────────────────────────────────
 
 class FindByCallsignModal(discord.ui.Modal, title="Find Member by Callsign"):
     number = discord.ui.TextInput(
@@ -655,8 +597,6 @@ class CallsignRemoveModal(discord.ui.Modal, title="Remove Callsign"):
             embed=_emb(description=msg, colour=discord.Colour.brand_green() if ok else discord.Colour.red()),
             ephemeral=True)
 
-
-# ─────────────────────────── SETUP ────────────────────────────────────────────
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(CallsignCog(bot))

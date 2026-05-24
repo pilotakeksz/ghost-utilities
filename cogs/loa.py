@@ -7,21 +7,18 @@ from datetime import datetime, timedelta, timezone
 LOA_REQUEST_ROLE = 1317963289518542959
 LOA_REVIEW_CHANNEL = 1398982690421870632
 LOA_REVIEWER_ROLE = 1318181592719687681
-LOA_ACTIVE_ROLE = 1317963293767241808  # Role to add/remove for LOA
+LOA_ACTIVE_ROLE = 1317963293767241808
 DATA_DIR = "data"
 LOGS_DIR = "logs"
 LOA_DATA_FILE = os.path.join(DATA_DIR, "loa_requests.json")
 LOA_LOG_FILE = os.path.join(LOGS_DIR, "loa.log")
 ACTIVE_LOAS_FILE = os.path.join(DATA_DIR, "active_loas.json")
-GUILD_ID = 1317959054177599559  # <-- Replace with your actual guild/server ID
+GUILD_ID = 1317959054177599559
 
-# Roles that are prohibited from filing LOAs (probationary ranks)
 PROBATIONARY_ROLES = [
-    # Add probationary role IDs here, e.g.:
-    # 1234567890123456789,
 ]
 
-MIN_REASON_LENGTH = 10  # Minimum characters for a reason to be considered "vague but conceivable"
+MIN_REASON_LENGTH = 10
 
 def ensure_dirs():
     os.makedirs(DATA_DIR, exist_ok=True)
@@ -40,7 +37,6 @@ def get_last_request_date(user_id) -> datetime | None:
             data = json.load(f)
     except Exception:
         return None
-    # Only Pending and Approved requests count toward the cooldown
     user_requests = [
         r for r in data
         if r.get("user_id") == user_id
@@ -60,13 +56,12 @@ def is_after_friday_cutoff(dt: datetime) -> bool:
     """Return True if dt falls outside the Friday-by-23:59-UTC submission window.
     Submissions on Saturday or Sunday (or after Friday 23:59 UTC) do not grant
     shift-infraction immunity if quota is not met."""
-    weekday = dt.weekday()  # Monday=0 … Friday=4, Saturday=5, Sunday=6
+    weekday = dt.weekday()
     if weekday < 4:
-        return False  # Mon–Thu: within window
+        return False
     if weekday == 4:
-        # Friday: only after 23:59 (i.e. 00:00 would roll to Saturday, so check minute >= 59 at 23h)
         return dt.hour > 23 or (dt.hour == 23 and dt.minute >= 59)
-    return True  # Saturday or Sunday: outside window
+    return True
 
 def save_loa_request(request):
     ensure_dirs()
@@ -140,19 +135,16 @@ class LOARequestModal(discord.ui.Modal, title="LOA Request"):
     )
 
     async def on_submit(self, interaction: discord.Interaction):
-        # ── Rule: only members with the LOA request role may apply ──────────
         if not any(r.id == LOA_REQUEST_ROLE for r in interaction.user.roles):
             await interaction.response.send_message("You do not have permission to request an LOA.", ephemeral=True)
             return
 
-        # ── Rule: probationary ranks may not file for LOAs ───────────────────
         if PROBATIONARY_ROLES and any(r.id in PROBATIONARY_ROLES for r in interaction.user.roles):
             await interaction.response.send_message(
                 "Probationary personnel are not eligible to file a Leave of Absence.", ephemeral=True
             )
             return
 
-        # ── Rule: duration must be 1–28 days (max 4 weeks) ──────────────────
         try:
             days = int(self.duration.value)
             if days < 1 or days > 28:
@@ -163,7 +155,6 @@ class LOARequestModal(discord.ui.Modal, title="LOA Request"):
             )
             return
 
-        # ── Rule: reason must be at least vaguely conceivable ────────────────
         reason_stripped = self.reason.value.strip()
         if len(reason_stripped) < MIN_REASON_LENGTH:
             await interaction.response.send_message(
@@ -172,7 +163,6 @@ class LOARequestModal(discord.ui.Modal, title="LOA Request"):
             )
             return
 
-        # ── Rule: may not submit within 1 week of a previous request ─────────
         now = datetime.now(timezone.utc)
         last_request = get_last_request_date(interaction.user.id)
         if last_request is not None and (now - last_request) < timedelta(weeks=1):
@@ -183,7 +173,6 @@ class LOARequestModal(discord.ui.Modal, title="LOA Request"):
             )
             return
 
-        # ── Rule: detect Friday 23:59 UTC cutoff for shift-infraction immunity ─
         submitted_after_cutoff = is_after_friday_cutoff(now)
 
         end_date = now + timedelta(days=days)
@@ -195,7 +184,7 @@ class LOARequestModal(discord.ui.Modal, title="LOA Request"):
             "requested_at": now.isoformat(),
             "end_date": end_date.isoformat(),
             "status": "Pending",
-            "shift_immunity": not submitted_after_cutoff,  # False if submitted after Friday 23:59 UTC
+            "shift_immunity": not submitted_after_cutoff,
         }
         save_loa_request(request)
         log_loa_action(
@@ -203,7 +192,6 @@ class LOARequestModal(discord.ui.Modal, title="LOA Request"):
             f"Shift immunity: {not submitted_after_cutoff}. Reason: {reason_stripped}"
         )
 
-        # Build review embed ──────────────────────────────────────────────────
         embed = discord.Embed(
             title="New LOA Request",
             description=(
@@ -236,15 +224,12 @@ class LOAReviewView(discord.ui.View):
         self.user_id = user_id
 
     async def update_embed(self, interaction, status, reviewer):
-        # copy existing embed and preserve non-status fields
         embed = interaction.message.embeds[0].copy()
-        # collect existing fields except Status/Reviewed by
         preserved = [(f.name, f.value, f.inline) for f in embed.fields if f.name not in ("Status", "Reviewed by")]
         embed.clear_fields()
         for name, value, inline in preserved:
             embed.add_field(name=name, value=value, inline=inline)
 
-        # set color based on status
         if "Approved" in status or "✅" in status:
             embed.color = discord.Color.green()
         elif "Denied" in status or "❌" in status:
@@ -267,9 +252,6 @@ class LOAReviewView(discord.ui.View):
         log_loa_action(f"APPROVED: {member} ({self.user_id}) by {interaction.user} ({interaction.user.id})")
         update_loa_status(self.user_id, "Approved")
 
-        # Find end_date for this user (from requests). If not present, skip adding active LOA here;
-        # update_loa_status sets Pending->Approved for any pending entries; try to capture end_date.
-        # helper to parse stored ISO datetimes as UTC-aware
         def _parse_iso_utc(s):
             try:
                 d = datetime.fromisoformat(s)
@@ -283,7 +265,6 @@ class LOAReviewView(discord.ui.View):
         try:
             with open(LOA_DATA_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            # pick the most recent approved entry for this user
             for req in reversed(data):
                 if req.get("user_id") == self.user_id and req.get("status") in ("Approved", "Approved "):
                     req_end_date = req.get("end_date")
@@ -292,15 +273,12 @@ class LOAReviewView(discord.ui.View):
             req_end_date = None
 
         if req_end_date:
-            # store ISO string (already saved) and ensure DB/display parsing uses UTC
             add_active_loa(self.user_id, req_end_date)
 
         try:
             if member and loa_role:
                 await member.add_roles(loa_role, reason="LOA approved")
-                # DM the user as embed
                 try:
-                    # Determine shift immunity status from stored request
                     shift_immunity = True
                     try:
                         with open(LOA_DATA_FILE, "r", encoding="utf-8") as f:
@@ -358,7 +336,6 @@ class LOAReviewView(discord.ui.View):
         log_loa_action(f"DENIED: {member} ({self.user_id}) by {interaction.user} ({interaction.user.id})")
         try:
             if member:
-                # send denied DM as embed
                 try:
                     dm_embed = discord.Embed(
                         title="❌ LOA Denied",
@@ -376,7 +353,7 @@ class LOACog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         ensure_dirs()
-        self.bot.add_view(LOAReviewView(user_id=0))  # Persistent view
+        self.bot.add_view(LOAReviewView(user_id=0))
         self.loa_expiry_check.start()
 
     @discord.app_commands.command(name="loa_request", description="Request a Leave of Absence (LOA).")
@@ -406,9 +383,7 @@ class LOACog(commands.Cog):
             await interaction.response.send_message(embed=embed)
             return
         
-        # Get member info for each active LOA
         loa_entries = []
-        # parse stored ISO datetimes as UTC-aware to compute remaining correctly
         def _parse_iso_utc(s):
             try:
                 d = datetime.fromisoformat(s)
@@ -430,7 +405,6 @@ class LOACog(commands.Cog):
             except Exception:
                 continue
         
-        # Sort by remaining time (shortest first)
         loa_entries.sort(key=lambda x: x[2].total_seconds())
         
         embed = discord.Embed(
@@ -461,24 +435,20 @@ class LOACog(commands.Cog):
             await interaction.response.send_message("Guild only.", ephemeral=True)
             return
         
-        # Determine target user
         target_user = member if member else interaction.user
         
-        # Check if viewing someone else's history (admin only)
         if member and member != interaction.user:
             admin_role_id = 1318181592719687681
             if not any(r.id == admin_role_id for r in interaction.user.roles):
                 await interaction.response.send_message("You can only view your own LOA history.", ephemeral=True)
                 return
         
-        # Load LOA requests
         try:
             with open(LOA_DATA_FILE, "r", encoding="utf-8") as f:
                 all_requests = json.load(f)
         except Exception:
             all_requests = []
         
-        # Filter requests for target user
         user_requests = [
             req for req in all_requests
             if req.get("user_id") == target_user.id
@@ -493,7 +463,6 @@ class LOACog(commands.Cog):
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
         
-        # Sort by requested_at (most recent first)
         def parse_date(req):
             try:
                 dt = datetime.fromisoformat(req.get("requested_at", ""))
@@ -505,7 +474,6 @@ class LOACog(commands.Cog):
         
         user_requests.sort(key=parse_date, reverse=True)
         
-        # Helper to parse ISO dates
         def _parse_iso_utc(s):
             try:
                 d = datetime.fromisoformat(s)
@@ -515,20 +483,17 @@ class LOACog(commands.Cog):
             except Exception:
                 return None
         
-        # Create embed with pagination if needed
         embed = discord.Embed(
             title=f"LOA History - {target_user.display_name}",
             color=discord.Color.blue()
         )
         embed.set_author(name=str(target_user), icon_url=target_user.display_avatar.url)
         
-        # Limit to 10 most recent for display
         display_requests = user_requests[:10]
         
         if len(user_requests) > 10:
             embed.set_footer(text=f"Showing 10 most recent of {len(user_requests)} total requests")
         
-        # Build description with request details
         lines = []
         for i, req in enumerate(display_requests, 1):
             status = req.get("status", "Unknown")
@@ -537,7 +502,6 @@ class LOACog(commands.Cog):
             requested_at = _parse_iso_utc(req.get("requested_at", ""))
             end_date = _parse_iso_utc(req.get("end_date", ""))
             
-            # Status emoji
             if "Approved" in status or "✅" in status:
                 status_emoji = "✅"
             elif "Denied" in status or "❌" in status:
@@ -545,10 +509,8 @@ class LOACog(commands.Cog):
             else:
                 status_emoji = "⏳"
             
-            # Format date
             date_str = f"<t:{int(requested_at.timestamp())}:D>" if requested_at else "Unknown"
             
-            # Build line
             line = f"**{i}. {status_emoji} {status}** - {duration} days\n"
             line += f"   Requested: {date_str}"
             if end_date:
@@ -578,7 +540,6 @@ class LOACog(commands.Cog):
             await interaction.response.send_message("Guild only.", ephemeral=True)
             return
         
-        # Check admin role
         admin_role_id = 1318181592719687681
         if not any(r.id == admin_role_id for r in interaction.user.roles):
             await interaction.response.send_message("You lack admin role.", ephemeral=True)
@@ -594,7 +555,6 @@ class LOACog(commands.Cog):
                 await interaction.response.send_message("Please provide a positive number of days to extend.", ephemeral=True)
                 return
             
-            # Check if user has active LOA
             try:
                 with open(ACTIVE_LOAS_FILE, "r", encoding="utf-8") as f:
                     active_loas = json.load(f)
@@ -605,7 +565,6 @@ class LOACog(commands.Cog):
                 await interaction.response.send_message(f"{user.mention} does not have an active LOA.", ephemeral=True)
                 return
             
-            # Extend the LOA
             current_end = datetime.fromisoformat(active_loas[str(user.id)])
             new_end = current_end + timedelta(days=days)
             active_loas[str(user.id)] = new_end.isoformat()
@@ -625,26 +584,21 @@ class LOACog(commands.Cog):
             
             await interaction.response.send_message(embed=embed)
             
-            # Notify user
             try:
                 await user.send(f"Your LOA has been extended by {days} days. New end date: <t:{int(new_end.timestamp())}:F>")
             except Exception:
                 pass
         
         elif action.value == "administer":
-            # Check if user already has LOA role
             if loa_role in user.roles:
                 await interaction.response.send_message(f"{user.mention} already has the LOA role.", ephemeral=True)
                 return
 
-            # Add LOA role
             try:
                 await user.add_roles(loa_role, reason="LOA administered by admin")
                 log_loa_action(f"ADMINISTERED: {user} ({user.id}) LOA role added by {interaction.user} ({interaction.user.id})")
 
-                # Treat as a requested+approved LOA so it shows in active LOAs:
                 now = datetime.now(timezone.utc)
-                # allow admin to provide a days param; fall back to default 28
                 default_days = 28
                 if days is not None:
                     try:
@@ -677,7 +631,6 @@ class LOACog(commands.Cog):
                 )
                 await interaction.response.send_message(embed=embed)
 
-                # Notify user as embed
                 try:
                     dm_embed = discord.Embed(
                         title="✅ LOA Administered",
@@ -692,7 +645,6 @@ class LOACog(commands.Cog):
                 await interaction.response.send_message(f"Failed to add LOA role: {e}", ephemeral=True)
         
         elif action.value == "end":
-            # Remove LOA role and active LOA entry
             removed_role = False
             removed_entry = False
             
@@ -704,7 +656,6 @@ class LOACog(commands.Cog):
                     await interaction.response.send_message(f"Failed to remove LOA role: {e}", ephemeral=True)
                     return
             
-            # Remove from active LOAs
             try:
                 with open(ACTIVE_LOAS_FILE, "r", encoding="utf-8") as f:
                     active_loas = json.load(f)
@@ -731,7 +682,6 @@ class LOACog(commands.Cog):
             
             await interaction.response.send_message(embed=embed)
             
-            # Notify user
             try:
                 await user.send("Your LOA has been ended by an administrator.")
             except Exception:
@@ -741,14 +691,12 @@ class LOACog(commands.Cog):
     async def loa_expiry_check(self):
         ensure_dirs()
         now = datetime.now(timezone.utc)
-        # Check active LOAs
         try:
             with open(ACTIVE_LOAS_FILE, "r", encoding="utf-8") as f:
                 active_loas = json.load(f)
         except Exception:
             active_loas = {}
 
-        # Use correct guild lookup
         guild = self.bot.get_guild(GUILD_ID)
         if guild is None:
             try:
@@ -760,7 +708,6 @@ class LOACog(commands.Cog):
         expired_users = []
         for user_id, end_date_str in active_loas.items():
             try:
-                # parse as UTC-aware
                 d = datetime.fromisoformat(end_date_str)
                 if d.tzinfo is None:
                     end_date = d.replace(tzinfo=timezone.utc)
@@ -786,7 +733,6 @@ class LOACog(commands.Cog):
                     except Exception:
                         pass
                 expired_users.append(user_id)
-        # Remove expired users from active_loas.json
         for user_id in expired_users:
             remove_active_loa(user_id)
 

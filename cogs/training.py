@@ -18,13 +18,8 @@ BANNER_URL = (
 
 TIMEOUT_SECONDS = 30 * 60  # 30 minutes
 
-# message_id -> {"host": Member, "voters": list[Member], "locked": bool, "max_voters": int}
 active_sessions: dict[int, dict] = {}
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Shared helpers
-# ─────────────────────────────────────────────────────────────────────────────
 
 def build_embed(title: str, host: discord.Member, voters: list[discord.Member]) -> discord.Embed:
     embed = discord.Embed(
@@ -68,14 +63,12 @@ async def expire_session(message: discord.Message, session: dict, label: str) ->
     await asyncio.sleep(TIMEOUT_SECONDS)
 
     if session.get("locked"):
-        return  # Already started -nothing to do.
+        return
 
     session["locked"] = True
 
-    # Disable all buttons on the original message
     try:
         view = discord.ui.View()
-        # Rebuild disabled buttons so the message still shows them greyed out
         vote_btn = discord.ui.Button(
             label="Vote", style=discord.ButtonStyle.success, emoji="✅", disabled=True
         )
@@ -98,10 +91,6 @@ async def expire_session(message: discord.Message, session: dict, label: str) ->
 
     active_sessions.pop(message.id, None)
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Ride Along view  (max 1 voter)
-# ─────────────────────────────────────────────────────────────────────────────
 
 class RideAlongView(discord.ui.View):
     def __init__(self, host: discord.Member):
@@ -179,10 +168,6 @@ class RideAlongView(discord.ui.View):
         await interaction.response.defer()
         active_sessions.pop(interaction.message.id, None)
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Training view  (max 3 voters)
-# ─────────────────────────────────────────────────────────────────────────────
 
 class TrainingView(discord.ui.View):
     def __init__(self, host: discord.Member):
@@ -269,15 +254,10 @@ class TrainingView(discord.ui.View):
         active_sessions.pop(interaction.message.id, None)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Cog
-# ─────────────────────────────────────────────────────────────────────────────
-
 class RideAlong(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    # ── /ridealong ────────────────────────────────────────────────────────────
 
     @app_commands.command(name="ridealong", description="Host a FHP Ghost Unit ride along")
     @app_commands.checks.has_role(HOST_ROLE_ID)
@@ -311,7 +291,6 @@ class RideAlong(commands.Cog):
         else:
             raise error
 
-    # ── /training ─────────────────────────────────────────────────────────────
 
     @app_commands.command(name="training", description="Host a FHP Ghost Unit training session")
     @app_commands.checks.has_role(HOST_ROLE_ID)
