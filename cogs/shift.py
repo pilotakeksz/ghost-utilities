@@ -322,18 +322,29 @@ class Store:
     def get_statistics(self) -> Tuple[int, int]:
         return len(self.records), sum(r["duration"] for r in self.records)
 
-    def can_be_promoted(self, user_id: int, member_roles: List[discord.Role]) -> bool:
-        """Return True if member is off cooldown (or was never promoted)."""
-        last_promo = self.meta["last_promotions"].get(str(user_id), 0)
-        if last_promo == 0:
-            return True
+    def promo_cooldown_days(self, user_id: int, member_roles: List[discord.Role]) -> int:
         admin_days = self.meta.get("admin_cooldowns", {}).get(str(user_id))
         if admin_days is not None:
-            cooldown_days = admin_days
-        else:
-            cooldown_days = _rank_cooldown_days(member_roles)
-        days_since = (ts_to_int(utcnow()) - last_promo) / (24 * 60 * 60)
-        return days_since >= cooldown_days
+            return admin_days
+        return _rank_cooldown_days(member_roles)
+
+    def promo_cooldown_remaining(self, user_id: int, member_roles: List[discord.Role]) -> Tuple[int, int]:
+        """Return (cooldown_days, remaining_seconds). remaining == 0 means eligible."""
+        cooldown_days = self.promo_cooldown_days(user_id, member_roles)
+        last_ts = self.meta.get("last_promotions", {}).get(str(user_id), 0)
+        if last_ts == 0:
+            return cooldown_days, 0
+        total_secs = (
+            cooldown_days * 24 * 60 * 60
+            + self.meta.get("cooldown_extensions", {}).get(str(user_id), 0)
+        )
+        elapsed = ts_to_int(utcnow()) - last_ts
+        return cooldown_days, max(0, total_secs - elapsed)
+
+    def can_be_promoted(self, user_id: int, member_roles: List[discord.Role]) -> bool:
+        """Return True if member is off cooldown (or was never promoted)."""
+        _, remaining = self.promo_cooldown_remaining(user_id, member_roles)
+        return remaining == 0
 
     def get_infractions(self, user_id: int) -> Dict[str, int]:
         return self.meta["infractions"].get(str(user_id), {"demotions": 0, "strikes": 0, "warns": 0})
@@ -983,13 +994,9 @@ class ShiftCog(commands.Cog):
                             self.store.meta["last_promotions"][str(user.id)] = timestamp
                             updated = True
                             try:
-                                cooldown_days = _rank_cooldown_days(member.roles)
-                                admin_days    = self.store.meta.get("admin_cooldowns", {}).get(str(member.id))
-                                if admin_days is not None:
-                                    cooldown_days = admin_days
-                                cooldown_secs = cooldown_days * 24 * 60 * 60
+                                cooldown_days = self.store.promo_cooldown_days(member.id, member.roles)
                                 extension     = self.store.meta.get("cooldown_extensions", {}).get(str(member.id), 0)
-                                total_secs    = cooldown_secs + extension
+                                total_secs    = cooldown_days * 24 * 60 * 60 + extension
                                 end_ts        = timestamp + total_secs
                                 if cooldown_days > 0:
                                     try:
@@ -1288,17 +1295,17 @@ class ShiftCog(commands.Cog):
                     infractions["warns"].append((member, misses))
                 # misses == 0: quota missed but never pinged yet — not listed.
             else:
-                # Quota met — check promotion eligibility:
-                # must be off cooldown (last ping in PROMOTIONS_CHANNEL_ID) AND
-                # have enough time logged.
+                # Quota met — off promotion cooldown and enough time for tier.
                 if not self.store.can_be_promoted(member.id, member.roles):
                     continue
-                promo = False
-                if gu_secs >= GU_PROMO_MINUTES * 60:
-                    promo = True
-                elif ROLE_PROBATION in mids and quota_minutes > 0 and gu_secs >= quota_minutes * 60:
-                    promo = True
-                if promo and not any(m.id == member.id for m, _ in infractions["promotions"]):
+                on_probation = ROLE_PROBATION in mids
+                met_promo_time = gu_secs >= GU_PROMO_MINUTES * 60
+                met_probation_quota = on_probation and (
+                    quota_minutes == 0 or gu_secs >= quota_minutes * 60
+                )
+                if (met_promo_time or met_probation_quota) and not any(
+                    m.id == member.id for m, _ in infractions["promotions"]
+                ):
                     infractions["promotions"].append((member, gu_secs))
 
         for cat in ["demotions", "strikes", "warns"]:
@@ -1879,9 +1886,13 @@ class ShiftCog(commands.Cog):
             if remaining == 0:
                 embed.add_field(name="Status", value="✅ Not on cooldown", inline=True)
             else:
-                embed.add_field(name="Status",    value="⏳ On cooldown",               inline=True)
-                embed.add_field(name="Ends",      value=f"<t:{last_ts + remaining}:R>", inline=True)
-                embed.add_field(name="Remaining", value=human_td(remaining),             inline=True)
+                end_ts = last_ts + (
+                    cooldown_days * 24 * 60 * 60
+                    + self.store.meta.get("cooldown_extensions", {}).get(str(member.id), 0)
+                )
+                embed.add_field(name="Status",    value="⏳ On cooldown",      inline=True)
+                embed.add_field(name="Ends",      value=f"<t:{end_ts}:R>",    inline=True)
+                embed.add_field(name="Remaining", value=human_td(remaining), inline=True)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @commands.command(name="cooldown", aliases=["cd"])
@@ -1900,26 +1911,17 @@ class ShiftCog(commands.Cog):
             if remaining == 0:
                 embed.add_field(name="Status", value="✅ Not on cooldown", inline=True)
             else:
-                embed.add_field(name="Status",    value="⏳ On cooldown",               inline=True)
-                embed.add_field(name="Ends",      value=f"<t:{last_ts + remaining}:R>", inline=True)
-                embed.add_field(name="Remaining", value=human_td(remaining),             inline=True)
+                end_ts = last_ts + (
+                    cooldown_days * 24 * 60 * 60
+                    + self.store.meta.get("cooldown_extensions", {}).get(str(member.id), 0)
+                )
+                embed.add_field(name="Status",    value="⏳ On cooldown",      inline=True)
+                embed.add_field(name="Ends",      value=f"<t:{end_ts}:R>",    inline=True)
+                embed.add_field(name="Remaining", value=human_td(remaining), inline=True)
         await ctx.reply(embed=embed, mention_author=False)
 
     def _calculate_member_cooldown(self, member: discord.Member) -> Tuple[int, int]:
-        last_ts = self.store.meta.get("last_promotions", {}).get(str(member.id), 0)
-        admin_days = self.store.meta.get("admin_cooldowns", {}).get(str(member.id))
-        if admin_days is not None:
-            cooldown_days = admin_days
-        else:
-            cooldown_days = _rank_cooldown_days(member.roles)
-        if last_ts == 0:
-            return cooldown_days, 0
-        cooldown_secs = cooldown_days * 24 * 60 * 60
-        extension     = self.store.meta.get("cooldown_extensions", {}).get(str(member.id), 0)
-        total_secs    = cooldown_secs + extension
-        elapsed       = ts_to_int(utcnow()) - last_ts
-        remaining     = max(0, total_secs - elapsed)
-        return cooldown_days, remaining
+        return self.store.promo_cooldown_remaining(member.id, member.roles)
 
     @app_commands.command(name="shift_promotions", description="Generate a formatted promotions post (admin only).")
     @app_commands.describe(
