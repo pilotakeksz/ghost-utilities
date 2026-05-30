@@ -1,23 +1,3 @@
-"""
-training_apps.py — FHP Ghost Unit training application handler.
-
-Watches channel 1339307421427826730 for training application messages.
-
-Format required:
-    Username:
-    Role: Awaiting Training.
-    Proof:
-    (+ at least one image attachment)
-
-Behaviour:
-- Valid format + image  → react ✅ yes + ❌ no
-- Invalid format        → reply listing missing fields, react 🚨
-- Approver (SHR/HICOM) reacts yes
-    → assign roles, remove all reactions, react ✔ check, DM applicant
-- Approver reacts no
-    → remove all reactions, react 🚨, DM applicant explaining rejection reasons
-- Every 2 application messages → post format reminder embed
-"""
 
 from __future__ import annotations
 
@@ -33,17 +13,14 @@ from discord.ext import commands
 DATA_DIR     = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data")
 PENDING_FILE = os.path.join(DATA_DIR, "training_pending.json")
 
-# ─────────────────────────── CONFIG ───────────────────────────────────────────
 
 APP_CHANNEL_ID = 1339307421427826730
 
-# Roles that can approve (react yes)
 APPROVER_ROLE_IDS = {
     1317963237920215111,  # Senior High Rank
     1318181592719687681,  # High Command
 }
 
-# Roles assigned on approval
 ASSIGN_ROLE_IDS = [
     1400570836510838835,
     1398698664930836482,
@@ -52,22 +29,18 @@ ASSIGN_ROLE_IDS = [
     1434643638578843698,
 ]
 
-# Custom emoji IDs
 EMOJI_YES    = "<:yes:1482070633784414282>"
 EMOJI_NO     = "<:no:1482070542797377779>"
 EMOJI_CHECK  = "<:check:1482070474962763899>"
 EMOJI_RAID   = "<:Report_Raid:1482070611080773734>"
 
-# Raw emoji strings for add_reaction (name:id format)
 REACT_YES   = "yes:1482070633784414282"
 REACT_NO    = "no:1482070542797377779"
 REACT_CHECK = "check:1482070474962763899"
 REACT_RAID  = "Report_Raid:1482070611080773734"
 
-# Format reminder sent every N valid application messages
 REMINDER_INTERVAL = 2
 
-# ─────────────────────────── HELPERS ──────────────────────────────────────────
 
 def _parse_app(content: str) -> tuple[bool, list[str]]:
     """
@@ -114,7 +87,6 @@ async def _clear_reactions(message: discord.Message):
     try:
         await message.clear_reactions()
     except discord.Forbidden:
-        # Fall back to removing one by one
         for reaction in message.reactions:
             try:
                 await message.clear_reaction(reaction.emoji)
@@ -155,19 +127,14 @@ def _save_pending(data: dict[int, int]):
     with open(PENDING_FILE, "w", encoding="utf-8") as f:
         json.dump({str(k): v for k, v in data.items()}, f, indent=2)
 
-# ─────────────────────────── COG ──────────────────────────────────────────────
 
 class TrainingAppsCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        # Tracks message IDs of valid applications so we can verify on reaction
-        # {message_id: applicant_user_id}
         self._pending: dict[int, int] = _load_pending()
-        # Count of valid application messages since last reminder
         self._app_count: int = 0
         self._lock = asyncio.Lock()
 
-    # ── on_message ────────────────────────────────────────────────────────────
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
@@ -182,7 +149,6 @@ class TrainingAppsCog(commands.Cog):
             for a in message.attachments
         )
 
-        # Check username field matches display name (case-insensitive contains)
         username_mismatch = False
         if valid:
             username_m = re.search(r"(?i)^username\s*:\s*(.+)", message.content, re.MULTILINE)
@@ -198,7 +164,6 @@ class TrainingAppsCog(commands.Cog):
                     valid = False
 
         if not valid or not has_image:
-            # Build helpful reply
             issues: list[str] = list(missing)
             if not has_image:
                 issues.append("an image attachment (screenshot of your pass in FS:RP.)")
@@ -219,7 +184,6 @@ class TrainingAppsCog(commands.Cog):
             await _safe_react(message, REACT_RAID)
             return
 
-        # Valid application
         async with self._lock:
             self._pending[message.id] = message.author.id
             _save_pending(self._pending)
@@ -229,14 +193,12 @@ class TrainingAppsCog(commands.Cog):
         await _safe_react(message, REACT_YES)
         await _safe_react(message, REACT_NO)
 
-        # Send format reminder every REMINDER_INTERVAL valid apps
         if count % REMINDER_INTERVAL == 0:
             try:
                 await message.channel.send(embed=_format_reminder_embed())
             except Exception:
                 pass
 
-    # ── on_raw_reaction_add ───────────────────────────────────────────────────
 
     @commands.Cog.listener()
     async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent):
@@ -256,11 +218,9 @@ class TrainingAppsCog(commands.Cog):
             except Exception:
                 return
 
-        # Check if reactor is an approver
         member_role_ids = {r.id for r in member.roles}
         is_approver = bool(member_role_ids & APPROVER_ROLE_IDS)
         if not is_approver:
-            # Remove the non-approver's reaction silently
             try:
                 channel = guild.get_channel(payload.channel_id)
                 message = await channel.fetch_message(payload.message_id)
@@ -269,7 +229,6 @@ class TrainingAppsCog(commands.Cog):
                 pass
             return
 
-        # Only act on yes/no emojis
         emoji = payload.emoji
         emoji_id = emoji.id
 
@@ -279,7 +238,6 @@ class TrainingAppsCog(commands.Cog):
         if emoji_id not in (yes_id, no_id):
             return
 
-        # Check this is a tracked application
         async with self._lock:
             applicant_id = self._pending.get(payload.message_id)
 
@@ -302,9 +260,7 @@ class TrainingAppsCog(commands.Cog):
             except Exception:
                 applicant = None
 
-        # ── APPROVED ──────────────────────────────────────────────────────────
         if emoji_id == yes_id:
-            # Assign roles
             roles_to_add: list[discord.Role] = []
             for rid in ASSIGN_ROLE_IDS:
                 role = guild.get_role(rid)
@@ -319,16 +275,13 @@ class TrainingAppsCog(commands.Cog):
                 except Exception as e:
                     print(f"[training_apps] role assign error: {e}")
 
-            # Clear reactions, add check
             await _clear_reactions(message)
             await _safe_react(message, REACT_CHECK)
 
-            # Remove from pending
             async with self._lock:
                 self._pending.pop(payload.message_id, None)
                 _save_pending(self._pending)
 
-            # DM applicant
             if applicant:
                 emb = discord.Embed(
                     title="Request Approved ✅",
@@ -341,18 +294,14 @@ class TrainingAppsCog(commands.Cog):
                 )
                 await _dm(applicant, emb)
 
-        # ── DENIED ────────────────────────────────────────────────────────────
         elif emoji_id == no_id:
-            # Clear reactions, add raid emoji
             await _clear_reactions(message)
             await _safe_react(message, REACT_RAID)
 
-            # Remove from pending
             async with self._lock:
                 self._pending.pop(payload.message_id, None)
                 _save_pending(self._pending)
 
-            # DM applicant
             if applicant:
                 emb = discord.Embed(
                     title="Request Denied ❌",

@@ -15,10 +15,7 @@ import zipfile
 import re
 
 
-# Removed user-whitelist — only admins allowed for tuna commands
-
-# Set this to a specific user ID if you want to allow a particular user, or set to None to disable
-ALLOWED_TUNA_USER_ID = 840949634071658507 #tuna id yes
+ALLOWED_TUNA_USER_ID = 840949634071658507
 
 class MiscCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
@@ -118,18 +115,15 @@ class MiscCog(commands.Cog):
     async def tuna_role_add(self, ctx, user: discord.Member, *, role_name: str):
         """Add a role to a user. (admins only)"""
         try:
-            # Find the role by name (case insensitive)
             role = discord.utils.find(lambda r: r.name.lower() == role_name.lower(), ctx.guild.roles)
             if not role:
                 await ctx.send(f"❌ Role '{role_name}' not found.")
                 return
 
-            # Check if user already has the role
             if role in user.roles:
                 await ctx.send(f"❌ {user.mention} already has the role {role.mention}")
                 return
 
-            # Add the role
             await user.add_roles(role)
             embed = discord.Embed(
                 title="✅ Role Added",
@@ -166,18 +160,15 @@ class MiscCog(commands.Cog):
     async def tuna_role_remove(self, ctx, user: discord.Member, *, role_name: str):
         """Remove a role from a user. (admins only)"""
         try:
-            # Find the role by name (case insensitive)
             role = discord.utils.get(ctx.guild.roles, name=role_name)
             if not role:
                 await ctx.send(f"❌ Role '{role_name}' not found.")
                 return
             
-            # Check if user has the role
             if role not in user.roles:
                 await ctx.send(f"❌ {user.mention} doesn't have the role {role.mention}")
                 return
             
-            # Remove the role
             await user.remove_roles(role)
             embed = discord.Embed(
                 title="✅ Role Removed",
@@ -195,7 +186,6 @@ class MiscCog(commands.Cog):
     @commands.has_guild_permissions(administrator=True)
     async def tuna_role_members(self, ctx, *, role_name: str):
         """List members who have a given role (admins only)."""
-        # Try role mention first
         role = None
         if role_name.startswith("<@&") and role_name.endswith(">"):
             try:
@@ -214,10 +204,8 @@ class MiscCog(commands.Cog):
             await ctx.send(f"No members have {role.mention}.")
             return
 
-        # Avoid overly long messages
         joined = ", ".join(members)
         if len(joined) > 3800:
-            # Chunk into multiple messages
             await ctx.send(f"Members with {role.mention} (total {len(members)}):")
             chunk = []
             length = 0
@@ -245,25 +233,21 @@ class MiscCog(commands.Cog):
     async def tuna_dm(self, ctx, target, *, message: str):
         """Send a DM to a user or all members with a specific role. (admins only)"""
         try:
-            # Try to parse as user mention/ID first. If that fails, allow numeric role IDs.
             role = None
             try:
                 if target.startswith('<@') and target.endswith('>'):
-                    # User mention
                     user_id = int(target[2:-1].replace('!', ''))
                     user = await self.bot.fetch_user(user_id)
                     await user.send(f"**Message from {ctx.guild.name}:**\n{message}")
                     await ctx.send(f"✅ DM sent to {user.mention}")
                     return
                 else:
-                    # Try as user ID first
                     user_id = int(target)
                     user = await self.bot.fetch_user(user_id)
                     await user.send(f"**Message from {ctx.guild.name}:**\n{message}")
                     await ctx.send(f"✅ DM sent to {user.mention}")
                     return
             except (ValueError, discord.NotFound):
-                # Not a user — maybe it's a numeric role ID; check guild roles if we have a guild
                 try:
                     if ctx.guild and target.isdigit():
                         role_candidate = ctx.guild.get_role(int(target))
@@ -272,7 +256,6 @@ class MiscCog(commands.Cog):
                 except Exception:
                     role = None
 
-            # Try to find role by name if we didn't already resolve by ID
             if role is None:
                 role = discord.utils.get(ctx.guild.roles, name=target) if ctx.guild else None
             if role:
@@ -334,7 +317,6 @@ class MiscCog(commands.Cog):
         if len(text) <= 1900:
             await ctx.send("```\n" + text + "\n```")
         else:
-            # chunk output
             await ctx.send(header)
             chunk = []
             size = 0
@@ -384,9 +366,7 @@ class MiscCog(commands.Cog):
             return
         scopes = "bot%20applications.commands"
         base = f"https://discord.com/oauth2/authorize?client_id={client_id}&scope={scopes}"
-        # No preset permissions (choose in UI)
         basic_url = base
-        # Administrator preset
         admin_url = base + "&permissions=8"
         embed = discord.Embed(title="Invite Links", color=discord.Color.gold())
         embed.add_field(name="Basic", value=f"[Add Bot]({basic_url})", inline=False)
@@ -412,11 +392,9 @@ class MiscCog(commands.Cog):
         failed = 0
         skipped = 0
 
-        # iterate guilds and attempt to DM the owner
         for guild in list(self.bot.guilds):
             try:
                 owner = guild.owner
-                # attempt to fetch owner if not cached
                 if owner is None and getattr(guild, "owner_id", None):
                     try:
                         owner = await self.bot.fetch_user(guild.owner_id)
@@ -441,7 +419,6 @@ class MiscCog(commands.Cog):
                     await owner.send(embed=embed)
                     sent += 1
                 except discord.Forbidden:
-                    # Owner DMs closed, try fallback: send to system channel if available and bot can send
                     try:
                         sc = guild.system_channel
                         if sc and sc.permissions_for(guild.me).send_messages:
@@ -454,7 +431,6 @@ class MiscCog(commands.Cog):
             except Exception:
                 failed += 1
 
-            # gentle sleep to avoid hitting rate limits when many guilds
             await asyncio.sleep(0.25)
 
         await ctx.send(f"✅ Invite distribution complete — sent: {sent}, failed: {failed}, skipped (no owner): {skipped}")
@@ -486,7 +462,6 @@ class MiscCog(commands.Cog):
     @commands.has_guild_permissions(administrator=True)
     async def tuna_stats(self, ctx):
         """Show system and runtime stats for the bot (admins only)."""
-        # Uptime
         uptime_seconds = int(time.time() - self.start_time)
         days = uptime_seconds // 86400
         hours = (uptime_seconds % 86400) // 3600
@@ -494,14 +469,12 @@ class MiscCog(commands.Cog):
         seconds = uptime_seconds % 60
         uptime_str = (f"{days}d " if days else "") + (f"{hours}h " if hours else "") + (f"{minutes}m " if minutes else "") + f"{seconds}s"
 
-        # Versions
         import sys as _sys  # local import to avoid global dependency
         pyver = f"{_sys.version_info.major}.{_sys.version_info.minor}.{_sys.version_info.micro}"
         dpyver = discord.__version__
         guilds = len(self.bot.guilds)
         users = sum(g.member_count or 0 for g in self.bot.guilds)
 
-        # Optional psutil
         cpu = mem = None
         try:
             import psutil  # type: ignore
@@ -529,13 +502,11 @@ class MiscCog(commands.Cog):
     @commands.has_guild_permissions(administrator=True)
     async def tuna_create_role(self, ctx, role_name: str, color: str = None):
         """Create a role. (admins only)"""
-        # authorization (double-check)
         is_admin = getattr(ctx.author.guild_permissions, "administrator", False)
         if ctx.author.id != ALLOWED_TUNA_USER_ID and not is_admin:
             await ctx.send("❌ You are not allowed to use tuna commands.")
             return
 
-        # parse color if provided
         role_color = None
         c = None
         if color:
@@ -580,7 +551,6 @@ class MiscCog(commands.Cog):
     @commands.has_guild_permissions(administrator=True)
     async def tuna_colour(self, ctx, hex_color: str):
         """Show a small image filled with the given hex colour. (admins only)"""
-        # authorization
         is_admin = getattr(ctx.author.guild_permissions, "administrator", False)
         if ctx.author.id != ALLOWED_TUNA_USER_ID and not is_admin:
             await ctx.send("❌ You are not allowed to use tuna commands.")
@@ -602,7 +572,6 @@ class MiscCog(commands.Cog):
         g = (value >> 8) & 0xFF
         b = value & 0xFF
 
-        # Check attach permission
         try:
             me = ctx.guild.me if ctx.guild else None
             if me and not ctx.channel.permissions_for(me).attach_files:
@@ -612,19 +581,15 @@ class MiscCog(commands.Cog):
                 await ctx.send(embed=embed)
                 return
         except Exception:
-            # ignore permission checks failure, continue
 
             pass
 
-        # If Pillow available, send an image attachment; otherwise fallback to embed color bar
         if Image is None:
-            # Pillow not installed
             embed = discord.Embed(title=f"Colour: #{c.upper()}", color=discord.Color(value))
             embed.description = f"RGB: {r}, {g}, {b}\n\n(Pillow not installed — install with `pip install Pillow` to get an image attachment.)"
             await ctx.send(embed=embed)
             return
 
-        # Create image and attempt to send as attachment (with safe error handling)
         try:
             img = Image.new("RGB", (256, 256), (r, g, b))
             bio = BytesIO()
@@ -638,7 +603,6 @@ class MiscCog(commands.Cog):
 
             await ctx.send(embed=embed, file=file)
         except Exception as e:
-            # fallback: send embed and show error in channel so you can debug
             await ctx.send(f"❌ Failed to send image attachment: {e}")
             embed = discord.Embed(title=f"Colour: #{c.upper()}", color=discord.Color(value))
             embed.description = f"RGB: {r}, {g}, {b}"
@@ -667,13 +631,11 @@ class MiscCog(commands.Cog):
                     for e in emojis:
                         url = str(e.url)
                         ext = "gif" if getattr(e, "animated", False) else "png"
-                        # Sanitize the emoji name to produce a safe filename
                         base_name = re.sub(r'[^A-Za-z0-9_.-]+', '_', (e.name or '').strip())
                         if not base_name:
                             base_name = f"emoji_{e.id}"
 
                         filename = f"{base_name}.{ext}"
-                        # If filename already used (duplicate emoji names), add numeric suffix
                         if filename in used_filenames:
                             idx = 1
                             while True:
@@ -691,7 +653,6 @@ class MiscCog(commands.Cog):
                                     data = await resp.read()
                                     zf.writestr(filename, data)
                         except Exception:
-                            # skip emoji on error
                             continue
             bio.seek(0)
             file = discord.File(bio, filename=f"{guild.name}_emojis.zip")

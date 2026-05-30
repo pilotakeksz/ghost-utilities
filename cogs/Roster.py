@@ -329,7 +329,6 @@ async def _github_batch_push(
     files: list[tuple[str, bytes]],
     message: str,
 ) -> bool:
-    """Push multiple files in a single commit using the Git Trees API."""
     headers = {
         "Authorization": f"Bearer {GITHUB_TOKEN}",
         "Accept": "application/vnd.github+json",

@@ -1,17 +1,3 @@
-"""
-logs.py — FHP Ghost Unit traffic stop, BOLO, and arrest log cog.
-
-Commands (require role 1317963289518542959):
-  /traffic_stop  — log a traffic stop; auto-issues BOLO if outcome is fled/fleeing
-  /arrest_log    — log an arrest; fetches Roblox headshot for the suspect
-
-Channels:
-  LOG_CHANNEL_ID  = 1317963340336861194  — arrest logs
-  BOLO_CHANNEL_ID = 1433452698564300810  — BOLOs
-
-BOLO "Mark as Complete" button usable by anyone with the personnel role.
-Arrest log "Issued by" is shown as a disabled button below the embed.
-"""
 
 from __future__ import annotations
 
@@ -23,7 +9,6 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-# ─────────────────────────── CONFIG ───────────────────────────────────────────
 
 PERSONNEL_ROLE_ID = 1317963289518542959
 LOG_CHANNEL_ID    = 1317963340336861194  # arrest logs
@@ -45,7 +30,6 @@ OUTCOME_CHOICES = [
     app_commands.Choice(name="Vehicle Search", value="Vehicle Search"),
 ]
 
-# ─────────────────────────── HELPERS ──────────────────────────────────────────
 
 def _utcnow_str() -> str:
     return datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M")
@@ -89,7 +73,6 @@ async def _get_roblox_headshot(username: str) -> str:
         print(f"[logs] Roblox headshot error for {username}: {e}")
     return FALLBACK_AVATAR
 
-# ─────────────────────────── VIEWS ────────────────────────────────────────────
 
 class BOLOView(discord.ui.View):
     def __init__(self):
@@ -115,7 +98,6 @@ class BOLOView(discord.ui.View):
 
 
 class IssuedByView(discord.ui.View):
-    """Persistent view showing a disabled 'Issued by' button below the embed."""
     def __init__(self, label: str, custom_id: str):
         super().__init__(timeout=None)
         btn = discord.ui.Button(
@@ -127,10 +109,6 @@ class IssuedByView(discord.ui.View):
         self.add_item(btn)
 
 
-# ─────────────────────────── AUTOCOMPLETE ─────────────────────────────────────
-
-# ─────────────────────────── COG ──────────────────────────────────────────────
-
 class LogsCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -141,7 +119,6 @@ class LogsCog(commands.Cog):
             return False
         return any(r.id == PERSONNEL_ROLE_ID for r in interaction.user.roles)
 
-    # ── /traffic_stop ──────────────────────────────────────────────────────────
 
     @app_commands.command(name="traffic_stop", description="Log a traffic stop.")
     @app_commands.describe(
@@ -221,7 +198,6 @@ class LogsCog(commands.Cog):
 
         await interaction.followup.send("✅ Traffic stop logged.", ephemeral=True)
 
-    # ── /arrest_log ────────────────────────────────────────────────────────────
 
     @app_commands.command(name="arrest_log", description="Log an arrest.")
     @app_commands.describe(
@@ -263,17 +239,12 @@ class LogsCog(commands.Cog):
         emb.set_thumbnail(url=headshot_url)
         emb.set_image(url=BOTTOM_IMAGE)
 
-        # Row 1: Suspect | Troopers (FHP Ghost)
         emb.add_field(name="Suspect:",                       value=suspect,         inline=True)
         emb.add_field(name="Troopers Involved (FHP Ghost):", value=troopers_ghost,  inline=True)
-        # Spacer row
         emb.add_field(name="\u200b", value="\u200b", inline=False)
-        # Row 2: Troopers (Non-Ghost) | Objects in Possession
         emb.add_field(name="Troopers Involved (Non-Ghost):", value=troopers_other or "None",   inline=True)
         emb.add_field(name="Objects in Possession:",         value=objects_possession,          inline=True)
-        # Spacer row
         emb.add_field(name="\u200b", value="\u200b", inline=False)
-        # Row 3: Objects in Car | Charges
         emb.add_field(name="Objects in Car:", value=objects_car or "None", inline=True)
         emb.add_field(name="Charges:",        value=charges,               inline=True)
 

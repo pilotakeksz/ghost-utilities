@@ -12,8 +12,6 @@ MILESTONE_MEMBER_COUNT = 600
 MILESTONE_COOLDOWN_HOURS = 150
 MILESTONE_DATA_FILE = os.path.join("data", "milestone_data.json")
 
-# Read env vars with safe fallbacks. If ROLE_ID_ON_JOIN isn't set, fall back to the
-# commonly used role for new members (1329910383678328922).
 DEFAULT_ROLE_ON_JOIN = 1407409515221225552
 DEFAULT_WELCOME_CHANNEL = None
 
@@ -29,10 +27,7 @@ try:
 except Exception:
     WELCOME_CHANNEL_ID = DEFAULT_WELCOME_CHANNEL
 
-# Users automatically blacklisted: the bot will DM and ban these user IDs on join
-# Add user IDs (integers) to this list to have them auto-banned when they join.
 BLACKLISTED_USER_IDS = [
-    # Example: 1163179403954618469,
 ]
  
 class WelcomeView(discord.ui.View):
@@ -55,7 +50,7 @@ class WelcomeView(discord.ui.View):
 class Welcome(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.last_milestone_time = {}  # Track when last milestone was sent per guild (guild_id -> timestamp)
+        self.last_milestone_time = {}
         self.load_milestone_data()
 
     def load_milestone_data(self):
@@ -64,7 +59,6 @@ class Welcome(commands.Cog):
             try:
                 with open(MILESTONE_DATA_FILE, "r", encoding="utf-8") as f:
                     data = json.load(f)
-                    # Convert string keys to int keys and ISO strings to datetime objects
                     self.last_milestone_time = {
                         int(guild_id): datetime.datetime.fromisoformat(timestamp_str)
                         for guild_id, timestamp_str in data.items()
@@ -79,7 +73,6 @@ class Welcome(commands.Cog):
         """Save milestone data to JSON file."""
         try:
             os.makedirs("data", exist_ok=True)
-            # Convert datetime objects to ISO strings for JSON
             data = {
                 str(guild_id): timestamp.isoformat()
                 for guild_id, timestamp in self.last_milestone_time.items()
@@ -92,17 +85,16 @@ class Welcome(commands.Cog):
     def can_send_milestone(self, guild_id: int) -> bool:
         """Check if enough time has passed since last milestone (48 hours)."""
         if guild_id not in self.last_milestone_time:
-            return True  # Never sent before, can send
+            return True
         
         last_time = self.last_milestone_time[guild_id]
         now = datetime.datetime.utcnow()
         time_diff = now - last_time
         
-        # Check if 48 hours have passed
         return time_diff.total_seconds() >= (MILESTONE_COOLDOWN_HOURS * 3600)
     @commands.command(name="welcome")
     async def test_welcome(self, ctx):
-        ALLOWED_ROLE_ID = 1318181592719687681  # Role ID that allows using this command (e.g., Admin role)
+        ALLOWED_ROLE_ID = 1318181592719687681
         if not any(r.id == ALLOWED_ROLE_ID for r in ctx.author.roles):
             await ctx.reply("You do not have permission to use this command.", mention_author=False)
             return
@@ -131,7 +123,6 @@ class Welcome(commands.Cog):
 
     @commands.Cog.listener()
     async def on_member_join(self, member: discord.Member):
-        # Auto-ban blacklisted users: DM then ban on join
 
         member_count = member.guild.member_count
         welcome_text = f"Welcome {member.mention}!"
