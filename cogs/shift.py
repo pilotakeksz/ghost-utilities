@@ -1897,6 +1897,97 @@ class ShiftCog(commands.Cog):
     def _calculate_member_cooldown(self, member: discord.Member) -> Tuple[int, int]:
         return self.store.promo_cooldown_remaining(member.id, member.roles)
 
+    def _is_cooldown_exempt(self, member: discord.Member) -> bool:
+        mids = {r.id for r in member.roles}
+        return (
+            QUOTA_ROLE_0 in mids or
+            QUOTA_ROLE_ADMIN_0 in mids or
+            self.store.is_excused(member.id) or
+            is_on_loa(member.id)
+        )
+
+    @app_commands.command(name="shift_cooldowns", description="List active promotion cooldowns (admin only).")
+    async def shift_cooldowns(self, interaction: discord.Interaction):
+        user  = interaction.user
+        guild = interaction.guild
+        if guild is None:
+            await interaction.response.send_message("Guild only.", ephemeral=True)
+            return
+        if not any(r.id == ROLE_ADMIN for r in user.roles):
+            await interaction.response.send_message("You lack admin role.", ephemeral=True)
+            return
+
+        rows = []
+        for uid_str, last_ts in self.store.meta.get("last_promotions", {}).items():
+            try:
+                uid = int(uid_str)
+            except ValueError:
+                continue
+            member = guild.get_member(uid)
+            if member is None:
+                continue
+            cooldown_days, remaining = self._calculate_member_cooldown(member)
+            if remaining <= 0:
+                continue
+            if self._is_cooldown_exempt(member):
+                continue
+            end_ts = last_ts + (
+                cooldown_days * 24 * 60 * 60
+                + self.store.meta.get("cooldown_extensions", {}).get(str(uid), 0)
+            )
+            rows.append((remaining, member, end_ts, cooldown_days))
+
+        rows.sort(key=lambda x: x[0])
+        embed = self.base_embed("Promotion Cooldown List", colour_warn() if rows else colour_ok())
+        if not rows:
+            embed.description = "No active promotion cooldowns found."
+        else:
+            embed.description = "\n".join(
+                f"• {member.mention} — ends <t:{end_ts}:R> — remaining {human_td(remaining)} — {cooldown_days}d cooldown"
+                for remaining, member, end_ts, cooldown_days in rows
+            )
+            embed.set_footer(text="Members currently on LOA, excused, or otherwise quota-exempt are excluded.")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @commands.command(name="cooldowns")
+    async def cooldowns_prefix(self, ctx: commands.Context):
+        user = ctx.author
+        if not any(r.id == ROLE_ADMIN for r in user.roles):
+            await ctx.reply("You lack admin role.", mention_author=False)
+            return
+
+        rows = []
+        for uid_str, last_ts in self.store.meta.get("last_promotions", {}).items():
+            try:
+                uid = int(uid_str)
+            except ValueError:
+                continue
+            member = ctx.guild.get_member(uid) if ctx.guild else None
+            if member is None:
+                continue
+            cooldown_days, remaining = self._calculate_member_cooldown(member)
+            if remaining <= 0:
+                continue
+            if self._is_cooldown_exempt(member):
+                continue
+            end_ts = last_ts + (
+                cooldown_days * 24 * 60 * 60
+                + self.store.meta.get("cooldown_extensions", {}).get(str(uid), 0)
+            )
+            rows.append((remaining, member, end_ts, cooldown_days))
+
+        rows.sort(key=lambda x: x[0])
+        embed = self.base_embed("Promotion Cooldown List", colour_warn() if rows else colour_ok())
+        if not rows:
+            embed.description = "No active promotion cooldowns found."
+        else:
+            embed.description = "\n".join(
+                f"• {member.mention} — ends <t:{end_ts}:R> — remaining {human_td(remaining)} — {cooldown_days}d cooldown"
+                for remaining, member, end_ts, cooldown_days in rows
+            )
+            embed.set_footer(text="Members currently on LOA, excused, or otherwise quota-exempt are excluded.")
+        await ctx.reply(embed=embed, mention_author=False)
+
     @app_commands.command(name="shift_promotions", description="Generate a formatted promotions post (admin only).")
     @app_commands.describe(
         host="Display name of the host",
