@@ -790,6 +790,11 @@ class ShiftListsView(discord.ui.View):
             for i, (member, secs) in enumerate(self.infractions["promotions"], 1):
                 lines.append(f"> `{i}.` <@{member.id}> • {self.cog._format_duration(secs)} this wave")
             lines.append("")
+        if self.infractions.get("missed_quota"):
+            lines.append("***__Missed Quota — Pending Infraction__***")
+            for i, (member, secs) in enumerate(self.infractions["missed_quota"], 1):
+                lines.append(f"> `{i}.` <@{member.id}> • {self.cog._format_duration(secs)} logged (no consecutive miss ping yet)")
+            lines.append("")
         if self.infractions.get("probation_risk"):
             lines.append("***__⚠️ At Risk — Probation Failure__***")
             for i, (member, secs) in enumerate(self.infractions["probation_risk"], 1):
@@ -1233,7 +1238,8 @@ class ShiftCog(commands.Cog):
     ) -> Dict[str, List]:
         manage_role = guild.get_role(ROLE_MANAGE_REQUIRED)
         infractions: Dict[str, List] = {
-            "demotions": [], "strikes": [], "warns": [], "promotions": [], "probation_risk": []
+            "demotions": [], "strikes": [], "warns": [], "missed_quota": [],
+            "promotions": [], "probation_risk": []
         }
         if not manage_role:
             return infractions
@@ -1264,6 +1270,8 @@ class ShiftCog(commands.Cog):
                     infractions["strikes"].append((member, misses))
                 elif misses >= 1:
                     infractions["warns"].append((member, misses))
+                else:
+                    infractions["missed_quota"].append((member, gu_secs))
             else:
                 if not self.store.can_be_promoted(member.id, member.roles):
                     continue
@@ -1279,6 +1287,7 @@ class ShiftCog(commands.Cog):
 
         for cat in ["demotions", "strikes", "warns"]:
             infractions[cat].sort(key=lambda x: x[1], reverse=True)
+        infractions["missed_quota"].sort(key=lambda x: x[1], reverse=False)
         infractions["promotions"].sort(key=lambda x: x[1], reverse=True)
         infractions["probation_risk"].sort(key=lambda x: x[1])
         return infractions
@@ -1319,6 +1328,12 @@ class ShiftCog(commands.Cog):
                 for i, (m, s) in enumerate(infractions["promotions"], 1)
             ]
             sections.append("***__Eligible for Promotion__***\n" + "\n".join(lines))
+        if infractions.get("missed_quota"):
+            lines = [
+                f"> `{i}.` <@{m.id}> • {self._format_duration(s)} logged (no consecutive miss ping yet)"
+                for i, (m, s) in enumerate(infractions["missed_quota"], 1)
+            ]
+            sections.append("***__Missed Quota — Pending Infraction__***\n" + "\n".join(lines))
         if infractions.get("probation_risk"):
             lines = [
                 f"> `{i}.` <@{m.id}> • {self._format_duration(s)} logged"
