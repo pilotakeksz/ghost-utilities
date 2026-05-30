@@ -1268,10 +1268,8 @@ class ShiftCog(commands.Cog):
                     infractions["demotions"].append((member, misses))
                 elif misses == 2:
                     infractions["strikes"].append((member, misses))
-                elif misses >= 1:
-                    infractions["warns"].append((member, misses))
                 else:
-                    infractions["missed_quota"].append((member, gu_secs))
+                    infractions["warns"].append((member, misses))
             else:
                 if not self.store.can_be_promoted(member.id, member.roles):
                     continue
