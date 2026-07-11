@@ -5,7 +5,7 @@ from discord.ext import commands
 LOGS_DIR = os.path.join(os.path.dirname(__file__), "../logs")
 os.makedirs(LOGS_DIR, exist_ok=True)
 LOG_FILE = os.path.join(LOGS_DIR, "messages.txt")
-LOG_CHANNEL_ID = 1371177684926861383
+LOG_CHANNEL_ID = 1525564400998551582
 
 class MessageLogger(commands.Cog):
     def __init__(self, bot):
