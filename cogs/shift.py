@@ -1770,10 +1770,9 @@ class ShiftCog(commands.Cog):
             ongoing = len(self.store.state)
             self.store.state   = {}
             self.store.records = []
-            self.store.meta["last_reset_ts"]    = ts_to_int(utcnow())
-            self.store.meta["infractions"]      = {}
-            self.store.meta["last_promotions"]  = {}
-            self.store.meta["infraction_ping_ts"] = {}
+            self.store.meta["last_reset_ts"]       = ts_to_int(utcnow())
+            self.store.meta["infractions"]         = {}
+            self.store.meta["infraction_ping_ts"]  = {}
             self.store.save()
 
             manage_role = guild.get_role(ROLE_MANAGE_REQUIRED)
