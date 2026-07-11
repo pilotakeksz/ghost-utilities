@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from typing import Any
 
 import discord
@@ -15,6 +16,9 @@ ALLOWED_USER_ID = 840949634071658507
 EMBED_WAIT_SECONDS = 5
 ALLOWED_EXTENSIONS = (".txt", ".py", ".json")
 NO_MENTIONS = discord.AllowedMentions.none()
+PERSISTENT_VIEWS_FILE = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..", "data", "persistent_views.json"
+)
 
 
 def _layout_view_from_json(data: dict[str, Any]) -> ui.LayoutView:
@@ -68,9 +72,74 @@ def _parse_embed_file(text: str) -> ui.LayoutView:
     return _layout_view_from_python(stripped)
 
 
+def _store_view_record(source_text: str, channel_id: int, message_id: int) -> None:
+    """Persist a view record so it can be re-registered on bot restart."""
+    views_dir = os.path.dirname(PERSISTENT_VIEWS_FILE)
+    os.makedirs(views_dir, exist_ok=True)
+
+    records: list[dict[str, Any]] = []
+    if os.path.exists(PERSISTENT_VIEWS_FILE):
+        try:
+            with open(PERSISTENT_VIEWS_FILE, "r", encoding="utf-8") as f:
+                records = json.load(f)
+        except (json.JSONDecodeError, Exception):
+            records = []
+
+    records.append({
+        "source": source_text,
+        "channel_id": channel_id,
+        "message_id": message_id,
+    })
+
+    with open(PERSISTENT_VIEWS_FILE, "w", encoding="utf-8") as f:
+        json.dump(records, f, indent=2, ensure_ascii=False)
+
+
+def _load_view_records() -> list[dict[str, Any]]:
+    """Load all stored persistent view records."""
+    if not os.path.exists(PERSISTENT_VIEWS_FILE):
+        return []
+    try:
+        with open(PERSISTENT_VIEWS_FILE, "r", encoding="utf-8") as f:
+            records = json.load(f)
+        if not isinstance(records, list):
+            return []
+        return records
+    except (json.JSONDecodeError, Exception):
+        return []
+
+
 class EmbedCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+
+    async def cog_load(self) -> None:
+        """Re-register all persistent views after cog load / bot restart."""
+        records = _load_view_records()
+        if not records:
+            print("[EmbedCog] No persistent views to re-register.")
+            return
+
+        registered = 0
+        failed = 0
+        for record in records:
+            source = record.get("source", "")
+            if not source:
+                failed += 1
+                continue
+            try:
+                view = _parse_embed_file(source)
+                message_id = record.get("message_id")
+                if message_id:
+                    self.bot.add_view(view, message_id=message_id)
+                else:
+                    self.bot.add_view(view)
+                registered += 1
+            except Exception as exc:
+                failed += 1
+                print(f"[EmbedCog] Failed to re-register persistent view (msg {record.get('message_id')}): {exc}")
+
+        print(f"[EmbedCog] Re-registered {registered} persistent views ({failed} failed).")
 
     @commands.command(name="embed")
     async def embed(self, ctx: commands.Context):
@@ -102,7 +171,12 @@ class EmbedCog(commands.Cog):
             raw = await attachment.read()
             text = raw.decode("utf-8")
             view = _parse_embed_file(text)
-            await ctx.channel.send(view=view, allowed_mentions=NO_MENTIONS)
+            sent_msg = await ctx.channel.send(view=view, allowed_mentions=NO_MENTIONS)
+
+            # Register as a persistent view and persist to disk for restart recovery
+            self.bot.add_view(view, message_id=sent_msg.id)
+            _store_view_record(text, ctx.channel.id, sent_msg.id)
+
             await ctx.send("Embed sent.", allowed_mentions=NO_MENTIONS)
         except Exception as exc:
             await ctx.send(f"Failed to send embed: {exc}", allowed_mentions=NO_MENTIONS)
