@@ -11,7 +11,7 @@ ADMIN_ID              = 840949634071658507
 ROLE_PERSONNEL        = 1317963289518542959
 PROMOTIONS_CHANNEL_ID = 1317963343524270192
 LOG_CHANNEL_ID        = 1398812728541577247
-PANEL_IMAGE_URL       = "https://media.discordapp.net/attachments/1403360987096027268/1408449383925809262/image.png?ex=69b6ba34&is=69b568b4&hm=1333e32082220cc64cd189b22e521c1f6b1d05bb0643587e0d3258817737244a&=&format=webp&quality=lossless&width=1867&height=70"
+PANEL_IMAGE_URL       = "https://media.discordapp.net/attachments/1513972130683945027/1521851170958741575/Untitled.png?ex=6a5384d9&is=6a523359&hm=8fe3df58831ff52a71cfb24b473aa2b6805ffe13878127660fe3411891c510b2&=&format=webp&quality=lossless"
 
 SECTION_ROLES: dict[int, tuple[str, int, int]] = {
     1318181592719687681: ("High Command",      1,   6),

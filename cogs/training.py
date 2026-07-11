@@ -9,12 +9,7 @@ PING_ROLE_ID = 1400570836510838835
 RIDEALONG_CHANNEL = 1400928626811342869
 TRAINING_CHANNEL  = 1396050841567232082
 
-BANNER_URL = (
-    "https://media.discordapp.net/attachments/1403360987096027268/"
-    "1403476370855559178/image.png?ex=69dcaa7a&is=69db58fa"
-    "&hm=46e8ad31d4375e03ae1b758cec02fc9dd94f66e0a074e1a9eb5b83addd783366"
-    "&=&format=webp&quality=lossless&width=1867&height=70"
-)
+BANNER_URL = "https://media.discordapp.net/attachments/1513972130683945027/1521851170958741575/Untitled.png?ex=6a5384d9&is=6a523359&hm=8fe3df58831ff52a71cfb24b473aa2b6805ffe13878127660fe3411891c510b2&=&format=webp&quality=lossless"
 
 TIMEOUT_SECONDS = 30 * 60  # 30 minutes
 

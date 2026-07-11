@@ -16,7 +16,7 @@ TS_CHANNEL_ID     = 1317963341272186963  # traffic stops
 BOLO_CHANNEL_ID   = 1433452698564300810
 
 FHP_LOGO     = "https://upload.wikimedia.org/wikipedia/commons/thumb/6/6a/Florida_Highway_Patrol_logo.svg/1200px-Florida_Highway_Patrol_logo.svg.png"
-BOTTOM_IMAGE = "https://media.discordapp.net/attachments/1403360987096027268/1408449383925809262/image.png?ex=69b6ba34&is=69b568b4&hm=1333e32082220cc64cd189b22e521c1f6b1d05bb0643587e0d3258817737244a&=&format=webp&quality=lossless&width=1867&height=70"
+BOTTOM_IMAGE = "https://media.discordapp.net/attachments/1513972130683945027/1521851170958741575/Untitled.png?ex=6a5384d9&is=6a523359&hm=8fe3df58831ff52a71cfb24b473aa2b6805ffe13878127660fe3411891c510b2&=&format=webp&quality=lossless"
 
 FLED_KEYWORDS    = {"fled", "flee", "fleeing", "ran", "escaped", "escape", "evaded", "evading", "pursuit"}
 FALLBACK_AVATAR  = "https://tr.rbxcdn.com/30DAY-AvatarHeadshot-placeholder/150/150/AvatarHeadshot/Png"

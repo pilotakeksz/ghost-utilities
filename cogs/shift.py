@@ -10,7 +10,7 @@ import asyncio
 from typing import Dict, Any, Optional, List, Tuple
 import glob
 
-IMAGE_URL = "https://cdn.discordapp.com/attachments/1403360987096027268/1408449383925809262/image.png?ex=69b41734&is=69b2c5b4&hm=c4f6e557a9d3583555a610f7ffd9a3874719ad17df17f93bc67fbce1b0efc3f5&"
+IMAGE_URL = "https://media.discordapp.net/attachments/1513972130683945027/1521851170958741575/Untitled.png?ex=6a5384d9&is=6a523359&hm=8fe3df58831ff52a71cfb24b473aa2b6805ffe13878127660fe3411891c510b2&=&format=webp&quality=lossless"
 
 ROLE_MANAGE_REQUIRED = 1317963289518542959
 ROLE_SHIFT_ON        = 1318198109725134930

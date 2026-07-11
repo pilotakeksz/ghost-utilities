@@ -92,6 +92,7 @@ class Welcome(commands.Cog):
         time_diff = now - last_time
         
         return time_diff.total_seconds() >= (MILESTONE_COOLDOWN_HOURS * 3600)
+    
     @commands.command(name="welcome")
     async def test_welcome(self, ctx):
         ALLOWED_ROLE_ID = 1318181592719687681
@@ -116,14 +117,13 @@ class Welcome(commands.Cog):
             value="`・` https://discord.com/channels/1317959054177599559/1317963328198279179",
             inline=True
         )
-        embed.set_image(url="https://cdn.discordapp.com/attachments/1403360987096027268/1408449383925809262/image.png?ex=69b568b4&is=69b41734&hm=3ed12e4ff85a2cea9ed3ab7dad606ec20fde048785de6fc5ec17b1e425c006df&")
+        embed.set_image(url="https://media.discordapp.net/attachments/1513972130683945027/1521851170958741575/Untitled.png?ex=6a5384d9&is=6a523359&hm=8fe3df58831ff52a71cfb24b473aa2b6805ffe13878127660fe3411891c510b2&=&format=webp&quality=lossless")
         embed.set_footer(text=FOOTER_TEXT, icon_url=FOOTER_ICON)
 
         await ctx.send(content=welcome_text, embed=embed, view=WelcomeView(member_count))
 
     @commands.Cog.listener()
     async def on_member_join(self, member: discord.Member):
-
         member_count = member.guild.member_count
         welcome_text = f"Welcome {member.mention}!"
 
@@ -141,7 +141,7 @@ class Welcome(commands.Cog):
             value="`・` [Chat here](https://discord.com/channels/1317959054177599559/1317963328198279179)",
             inline=True
         )
-        embed.set_image(url="https://cdn.discordapp.com/attachments/1403360987096027268/1408449383925809262/image.png?ex=69b568b4&is=69b41734&hm=3ed12e4ff85a2cea9ed3ab7dad606ec20fde048785de6fc5ec17b1e425c006df&")
+        embed.set_image(url="https://media.discordapp.net/attachments/1513972130683945027/1521851170958741575/Untitled.png?ex=6a5384d9&is=6a523359&hm=8fe3df58831ff52a71cfb24b473aa2b6805ffe13878127660fe3411891c510b2&=&format=webp&quality=lossless")
         embed.set_footer(text=FOOTER_TEXT, icon_url=FOOTER_ICON)
         
 
