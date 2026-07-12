@@ -29,6 +29,16 @@ ASSET_CHANNEL_ID = os.getenv("ASSET_CHANNEL_ID")
 # Fallback channel name to create if no asset channel is configured.
 ASSET_CHANNEL_NAME = "bot-assets"
 
+# The original embed banner image (in channel 1513972130683945021). The signed
+# media.discordapp.net link expires, so we download it once and re-host it via a
+# permanent cdn.discordapp.com URL at startup.
+BANNER_SOURCE_URL = (
+    "https://media.discordapp.net/attachments/1513972130683945021/"
+    "1521851170958741575/Untitled.png"
+    "?ex=6a5384d9&is=6a523359&hm=8fe3df58831ff52a71cfb24b473aa2b6805ffe13878127660fe3411891c510b2"
+    "&=&format=webp&quality=lossless"
+)
+
 # Runtime-resolved URLs (populated from cache at import, then uploaded if needed)
 BANNER_URL: Optional[str] = None
 LOGO_URL: Optional[str] = None
@@ -132,12 +142,43 @@ def _generate_logo() -> None:
     print(f"[assets] Generated logo -> {LOGO_PATH}")
 
 
+def _download_banner() -> bool:
+    """Download the real banner image from BANNER_SOURCE_URL into BANNER_PATH.
+
+    Returns True on success. Falls back to generating a placeholder on failure.
+    """
+    import io
+    import urllib.request
+
+    try:
+        req = urllib.request.Request(BANNER_SOURCE_URL, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = resp.read()
+        if not data:
+            return False
+        # Convert to PNG via Pillow so the uploaded file is a clean, standard PNG.
+        try:
+            from PIL import Image
+            img = Image.open(io.BytesIO(data))
+            img.save(BANNER_PATH, "PNG")
+        except Exception:
+            # Save raw bytes (likely webp) — Discord still renders it on upload.
+            with open(BANNER_PATH, "wb") as f:
+                f.write(data)
+        print(f"[assets] Downloaded real banner -> {BANNER_PATH} ({len(data)} bytes)")
+        return True
+    except Exception as exc:
+        print(f"[assets] Failed to download banner ({exc}); will generate placeholder.")
+        return False
+
+
 def _ensure_local_files() -> None:
     if not os.path.exists(BANNER_PATH):
-        try:
-            _generate_banner()
-        except Exception as exc:
-            print(f"[assets] Failed to generate banner: {exc}")
+        if not _download_banner():
+            try:
+                _generate_banner()
+            except Exception as exc:
+                print(f"[assets] Failed to generate banner: {exc}")
     if not os.path.exists(LOGO_PATH):
         try:
             _generate_logo()
