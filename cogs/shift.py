@@ -10,7 +10,7 @@ import asyncio
 from typing import Dict, Any, Optional, List, Tuple
 import glob
 
-from cogs import _assets
+
 
 ROLE_MANAGE_REQUIRED = 1317963289518542959
 ROLE_SHIFT_ON        = 1318198109725134930
@@ -1030,7 +1030,7 @@ class ShiftCog(commands.Cog):
 
     def base_embed(self, title: str, colour: discord.Colour) -> discord.Embed:
         e = discord.Embed(title=title, colour=colour, timestamp=utcnow())
-        e.set_image(url=_assets.BANNER_URL)
+        e.set_image(url="https://media.discordapp.net/attachments/1513972130683945021/1521851170958741575/Untitled.png?ex=6a5384d9&is=6a523359&hm=8fe3df58831ff52a71cfb24b473aa2b6805ffe13878127660fe3411891c510b2&=&format=webp&quality=lossless")
         return e
 
     def embed_info(self, desc: str)  -> discord.Embed:
