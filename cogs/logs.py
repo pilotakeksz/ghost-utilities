@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -15,8 +14,7 @@ LOG_CHANNEL_ID    = 1317963340336861194  # arrest logs
 TS_CHANNEL_ID     = 1317963341272186963  # traffic stops
 BOLO_CHANNEL_ID   = 1433452698564300810
 
-FHP_LOGO     = "https://upload.wikimedia.org/wikipedia/commons/thumb/6/6a/Florida_Highway_Patrol_logo.svg/1200px-Florida_Highway_Patrol_logo.svg.png"
-BOTTOM_IMAGE = "https://media.discordapp.net/attachments/1513972130683945027/1521851170958741575/Untitled.png?ex=6a5384d9&is=6a523359&hm=8fe3df58831ff52a71cfb24b473aa2b6805ffe13878127660fe3411891c510b2&=&format=webp&quality=lossless"
+from cogs import _assets
 
 FLED_KEYWORDS    = {"fled", "flee", "fleeing", "ran", "escaped", "escape", "evaded", "evading", "pursuit"}
 FALLBACK_AVATAR  = "https://tr.rbxcdn.com/30DAY-AvatarHeadshot-placeholder/150/150/AvatarHeadshot/Png"
@@ -39,8 +37,8 @@ def _is_fled(outcome: str) -> bool:
 
 def _base_embed(colour: discord.Colour) -> discord.Embed:
     e = discord.Embed(colour=colour)
-    e.set_thumbnail(url=FHP_LOGO)
-    e.set_image(url=BOTTOM_IMAGE)
+    e.set_thumbnail(url=_assets.LOGO_URL)
+    e.set_image(url=_assets.BANNER_URL)
     e.set_footer(text=f"Ghost Unit Utilities • {_utcnow_str()}")
     return e
 
@@ -237,7 +235,7 @@ class LogsCog(commands.Cog):
         emb.title = "🚔 Arrest Log"
         emb.description = "An arrest has been logged, below you will find details such as; suspect, charges, troopers involved, and more."
         emb.set_thumbnail(url=headshot_url)
-        emb.set_image(url=BOTTOM_IMAGE)
+        emb.set_image(url=_assets.BANNER_URL)
 
         emb.add_field(name="Suspect:",                       value=suspect,         inline=True)
         emb.add_field(name="Troopers Involved (FHP Ghost):", value=troopers_ghost,  inline=True)

@@ -3,6 +3,7 @@ from discord.ext import commands
 import os
 import datetime
 import json
+from cogs import _assets
 
 FOOTER_TEXT = "FS:RP | Florida Highway Patrol Ghost Unit"  
 FOOTER_ICON = "https://cdn.discordapp.com/emojis/1398999132357525586.webp?size=128"
@@ -29,7 +30,7 @@ except Exception:
 
 BLACKLISTED_USER_IDS = [
 ]
- 
+  
 class WelcomeView(discord.ui.View):
     def __init__(self, member_count: int):
         super().__init__(timeout=None)
@@ -117,7 +118,7 @@ class Welcome(commands.Cog):
             value="`・` https://discord.com/channels/1317959054177599559/1317963328198279179",
             inline=True
         )
-        embed.set_image(url="https://media.discordapp.net/attachments/1513972130683945027/1521851170958741575/Untitled.png?ex=6a5384d9&is=6a523359&hm=8fe3df58831ff52a71cfb24b473aa2b6805ffe13878127660fe3411891c510b2&=&format=webp&quality=lossless")
+        embed.set_image(url=_assets.BANNER_URL)
         embed.set_footer(text=FOOTER_TEXT, icon_url=FOOTER_ICON)
 
         await ctx.send(content=welcome_text, embed=embed, view=WelcomeView(member_count))
@@ -141,7 +142,7 @@ class Welcome(commands.Cog):
             value="`・` [Chat here](https://discord.com/channels/1317959054177599559/1317963328198279179)",
             inline=True
         )
-        embed.set_image(url="https://media.discordapp.net/attachments/1513972130683945027/1521851170958741575/Untitled.png?ex=6a5384d9&is=6a523359&hm=8fe3df58831ff52a71cfb24b473aa2b6805ffe13878127660fe3411891c510b2&=&format=webp&quality=lossless")
+        embed.set_image(url=_assets.BANNER_URL)
         embed.set_footer(text=FOOTER_TEXT, icon_url=FOOTER_ICON)
         
 

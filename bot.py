@@ -298,6 +298,13 @@ async def on_ready():
     print(f"Configured tuna admins: {TUNA_ADMIN_IDS}")
     await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name="Courtesy, Service, and Protection"))
 
+    # Resolve permanent embed image URLs (uploads local assets on first run).
+    try:
+        from cogs import _assets
+        await _assets.ensure_assets(bot)
+    except Exception as e:
+        print(f"❌ Failed to resolve embed assets: {e}")
+
     
     if not getattr(bot, "_synced", False):
         try:

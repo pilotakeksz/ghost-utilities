@@ -9,7 +9,7 @@ PING_ROLE_ID = 1400570836510838835
 RIDEALONG_CHANNEL = 1400928626811342869
 TRAINING_CHANNEL  = 1396050841567232082
 
-BANNER_URL = "https://media.discordapp.net/attachments/1513972130683945027/1521851170958741575/Untitled.png?ex=6a5384d9&is=6a523359&hm=8fe3df58831ff52a71cfb24b473aa2b6805ffe13878127660fe3411891c510b2&=&format=webp&quality=lossless"
+from cogs import _assets
 
 TIMEOUT_SECONDS = 30 * 60  # 30 minutes
 
@@ -49,7 +49,7 @@ def build_embed(title: str, host: discord.Member, voters: list[discord.Member]) 
             value="\n".join(v.mention for v in voters),
             inline=False,
         )
-    embed.set_image(url=BANNER_URL)
+    embed.set_image(url=_assets.BANNER_URL)
     return embed
 
 

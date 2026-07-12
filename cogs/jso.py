@@ -35,9 +35,7 @@ SERVER_B_PING_ROLE       = 1315403773304242178
 
 # ─────────────────────────── ASSETS ───────────────────────────────────────────
 
-FHP_LOGO = "https://upload.wikimedia.org/wikipedia/commons/thumb/6/6a/Florida_Highway_Patrol_logo.svg/1200px-Florida_Highway_Patrol_logo.svg.png"
-BOTTOM_IMAGE = "https://media.discordapp.net/attachments/1513972130683945027/1521851170958741575/Untitled.png?ex=6a5384d9&is=6a523359&hm=8fe3df58831ff52a71cfb24b473aa2b6805ffe13878127660fe3411891c510b2&=&format=webp&quality=lossless"
-FOOTER_ICON = FHP_LOGO
+from cogs import _assets
 
 FALLBACK_AVATAR = "https://tr.rbxcdn.com/30DAY-AvatarHeadshot-placeholder/150/150/AvatarHeadshot/Png"
 
@@ -49,8 +47,8 @@ def _utcnow_str() -> str:
 
 def _base_embed(colour: discord.Colour) -> discord.Embed:
     e = discord.Embed(colour=colour)
-    e.set_image(url=BOTTOM_IMAGE)
-    e.set_footer(text=f"Ghost Unit Utilities • {_utcnow_str()}", icon_url=FOOTER_ICON)
+    e.set_image(url=_assets.BANNER_URL)
+    e.set_footer(text=f"Ghost Unit Utilities • {_utcnow_str()}", icon_url=_assets.LOGO_URL)
     return e
 
 
