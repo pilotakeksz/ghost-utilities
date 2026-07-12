@@ -165,7 +165,7 @@ def _build_list_embed(data: dict[str, str]) -> discord.Embed:
 def _emb(title: str = "", description: str = "", colour: discord.Colour = discord.Colour.blurple()) -> discord.Embed:
     """Create a standard embed with the panel image set."""
     e = discord.Embed(title=title, description=description, colour=colour)
-    e.set_image(url=_assets.BANNER_URL)
+    e.set_image(url="https://media.discordapp.net/attachments/1513972130683945021/1521851170958741575/Untitled.png?ex=6a5384d9&is=6a523359&hm=8fe3df58831ff52a71cfb24b473aa2b6805ffe13878127660fe3411891c510b2&=&format=webp&quality=lossless")
     return e
 
 
