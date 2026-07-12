@@ -11,7 +11,7 @@ ADMIN_ID              = 840949634071658507
 ROLE_PERSONNEL        = 1317963289518542959
 PROMOTIONS_CHANNEL_ID = 1317963343524270192
 LOG_CHANNEL_ID        = 1398812728541577247
-from cogs import _assets
+
 
 SECTION_ROLES: dict[int, tuple[str, int, int]] = {
     1318181592719687681: ("High Command",      1,   6),
