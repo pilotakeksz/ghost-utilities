@@ -13,12 +13,29 @@ from discord.ui.view import _component_to_item
 
 
 ALLOWED_USER_ID = 840949634071658507
-EMBED_WAIT_SECONDS = 5
+EMBED_WAIT_SECONDS = 30  # increased to allow multi-upload
 ALLOWED_EXTENSIONS = (".txt", ".py", ".json")
 NO_MENTIONS = discord.AllowedMentions.none()
 PERSISTENT_VIEWS_FILE = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "..", "data", "persistent_views.json"
 )
+
+
+def _extract_flow_buttons(data: dict) -> list[dict]:
+    """Extract button data for buttons that have a flow action (type 6 = Send Message)."""
+    flow_buttons = []
+    for component in data.get("components", []):
+        if component.get("type") == 1:  # Action Row
+            for btn in component.get("components", []):
+                if btn.get("type") == 2:  # Button
+                    flow = btn.get("flow")
+                    if flow and isinstance(flow, dict):
+                        actions = flow.get("actions", [])
+                        for action in actions:
+                            if action.get("type") == 6:  # Send Message flow action
+                                flow_buttons.append(btn)
+                                break
+    return flow_buttons
 
 
 def _layout_view_from_json(data: dict[str, Any]) -> ui.LayoutView:
@@ -72,7 +89,12 @@ def _parse_embed_file(text: str) -> ui.LayoutView:
     return _layout_view_from_python(stripped)
 
 
-def _store_view_record(source_text: str, channel_id: int, message_id: int) -> None:
+def _store_view_record(
+    source_text: str,
+    channel_id: int,
+    message_id: int,
+    button_responses: dict[str, dict[str, Any]] | None = None,
+) -> None:
     """Persist a view record so it can be re-registered on bot restart."""
     views_dir = os.path.dirname(PERSISTENT_VIEWS_FILE)
     os.makedirs(views_dir, exist_ok=True)
@@ -85,11 +107,15 @@ def _store_view_record(source_text: str, channel_id: int, message_id: int) -> No
         except (json.JSONDecodeError, Exception):
             records = []
 
-    records.append({
+    record: dict[str, Any] = {
         "source": source_text,
         "channel_id": channel_id,
         "message_id": message_id,
-    })
+    }
+    if button_responses:
+        record["button_responses"] = button_responses
+
+    records.append(record)
 
     with open(PERSISTENT_VIEWS_FILE, "w", encoding="utf-8") as f:
         json.dump(records, f, indent=2, ensure_ascii=False)
@@ -107,6 +133,58 @@ def _load_view_records() -> list[dict[str, Any]]:
         return records
     except (json.JSONDecodeError, Exception):
         return []
+
+
+class FlowButtonView(ui.View):
+    """A persistent view that renders a Components V2 layout and handles flow button clicks."""
+
+    def __init__(self, data: dict, responses: dict[str, dict[str, Any]]):
+        super().__init__(timeout=None)
+        self.responses = responses
+        self._build_from_json(data)
+
+    def _build_from_json(self, data: dict) -> None:
+        """Rebuild the layout from JSON, attaching callbacks to flow buttons."""
+        for comp_data in data.get("components", []):
+            component = _component_factory(comp_data, None)
+            if component is None:
+                continue
+            item = _component_to_item(component)
+
+            # If this is a button with a flow response, attach a callback
+            if hasattr(item, "custom_id") and item.custom_id in self.responses:
+                item.callback = self._make_callback(item.custom_id)
+
+            self.add_item(item)
+
+    def _make_callback(self, custom_id: str):
+        """Create a callback that sends the stored response embed as ephemeral."""
+        async def callback(interaction: discord.Interaction) -> None:
+            response = self.responses.get(custom_id)
+            if not response:
+                await interaction.response.send_message(
+                    "❌ No response configured for this button.", ephemeral=True
+                )
+                return
+
+            source = response.get("source", "")
+            if not source:
+                await interaction.response.send_message(
+                    "❌ Response source is empty.", ephemeral=True
+                )
+                return
+
+            try:
+                view = _parse_embed_file(source)
+                await interaction.response.send_message(
+                    view=view, ephemeral=True, allowed_mentions=NO_MENTIONS
+                )
+            except Exception as exc:
+                await interaction.response.send_message(
+                    f"❌ Failed to load response embed: {exc}", ephemeral=True
+                )
+
+        return callback
 
 
 class EmbedCog(commands.Cog):
@@ -128,7 +206,18 @@ class EmbedCog(commands.Cog):
                 failed += 1
                 continue
             try:
-                view = _parse_embed_file(source)
+                button_responses = record.get("button_responses") or {}
+                if button_responses:
+                    # Use FlowButtonView to handle button interactions
+                    data = json.loads(source) if source.strip().startswith("{") else None
+                    if data and isinstance(data, dict):
+                        view = FlowButtonView(data, button_responses)
+                    else:
+                        # Python-based embeds with flows aren't supported for button responses
+                        view = _parse_embed_file(source)
+                else:
+                    view = _parse_embed_file(source)
+
                 message_id = record.get("message_id")
                 if message_id:
                     self.bot.add_view(view, message_id=message_id)
@@ -143,7 +232,9 @@ class EmbedCog(commands.Cog):
 
     @commands.command(name="embed")
     async def embed(self, ctx: commands.Context):
-        """Upload a Components V2 embed file (.txt/.py/.json) within 5 seconds."""
+        """Upload a Components V2 embed file (.txt/.py/.json) within 30 seconds.
+        If the embed contains buttons with flows, you'll be prompted to upload
+        response embeds for each button. Button responses are sent ephemerally."""
         if ctx.author.id != ALLOWED_USER_ID:
             await ctx.reply("You don't have permission to use this command.", mention_author=False)
             return
@@ -170,14 +261,95 @@ class EmbedCog(commands.Cog):
         try:
             raw = await attachment.read()
             text = raw.decode("utf-8")
-            view = _parse_embed_file(text)
+        except Exception as exc:
+            await ctx.send(f"Failed to read file: {exc}", allowed_mentions=NO_MENTIONS)
+            return
+
+        # Check if this is JSON with flow buttons
+        button_responses: dict[str, dict[str, Any]] = {}
+        data: dict | None = None
+
+        if text.strip().startswith("{"):
+            try:
+                data = json.loads(text.strip())
+            except json.JSONDecodeError:
+                data = None
+
+            if data and isinstance(data, dict):
+                flow_buttons = _extract_flow_buttons(data)
+                if flow_buttons:
+                    await ctx.send(
+                        f"🔍 Detected **{len(flow_buttons)}** button(s) with flows. "
+                        f"I'll now ask you to upload the response embed for each button.\n"
+                        f"Button responses will be sent **ephemerally** (only the clicker can see them).",
+                        allowed_mentions=NO_MENTIONS,
+                    )
+
+                    for btn in flow_buttons:
+                        label = btn.get("label", "Unnamed Button")
+                        custom_id = btn.get("custom_id", "")
+                        emoji = btn.get("emoji", {})
+                        emoji_str = f":{emoji.get('name', '')}:" if emoji.get("name") else ""
+
+                        await ctx.send(
+                            f"📤 **Button: {emoji_str} {label}** (`{custom_id}`)\n"
+                            f"Upload the response embed file (`.txt`, `.py`, `.json`) "
+                            f"within **{EMBED_WAIT_SECONDS}** seconds.",
+                            allowed_mentions=NO_MENTIONS,
+                        )
+
+                        try:
+                            resp_upload = await self.bot.wait_for(
+                                "message", check=check, timeout=EMBED_WAIT_SECONDS
+                            )
+                        except asyncio.TimeoutError:
+                            await ctx.send(
+                                f"⏱️ Timed out waiting for response embed for **{label}**. "
+                                f"Skipping this button.",
+                                allowed_mentions=NO_MENTIONS,
+                            )
+                            continue
+
+                        resp_attachment = resp_upload.attachments[0]
+                        try:
+                            resp_raw = await resp_attachment.read()
+                            resp_text = resp_raw.decode("utf-8")
+                            # Validate it parses correctly
+                            _parse_embed_file(resp_text)
+                            button_responses[custom_id] = {
+                                "source": resp_text,
+                                "ephemeral": True,
+                            }
+                            await ctx.send(
+                                f"✅ Stored response for **{label}**.",
+                                allowed_mentions=NO_MENTIONS,
+                            )
+                        except Exception as exc:
+                            await ctx.send(
+                                f"❌ Invalid response embed for **{label}**: {exc}\n"
+                                f"Skipping this button.",
+                                allowed_mentions=NO_MENTIONS,
+                            )
+
+        # Send the main embed
+        try:
+            if data and isinstance(data, dict) and button_responses:
+                # Use FlowButtonView to handle button interactions
+                view = FlowButtonView(data, button_responses)
+            else:
+                view = _parse_embed_file(text)
+
             sent_msg = await ctx.channel.send(view=view, allowed_mentions=NO_MENTIONS)
 
             # Register as a persistent view and persist to disk for restart recovery
             self.bot.add_view(view, message_id=sent_msg.id)
-            _store_view_record(text, ctx.channel.id, sent_msg.id)
+            _store_view_record(text, ctx.channel.id, sent_msg.id, button_responses or None)
 
-            await ctx.send("Embed sent.", allowed_mentions=NO_MENTIONS)
+            parts = ["✅ Embed sent."]
+            if button_responses:
+                parts.append(f" ({len(button_responses)} button response(s) registered)")
+            await ctx.send("".join(parts), allowed_mentions=NO_MENTIONS)
+
         except Exception as exc:
             await ctx.send(f"Failed to send embed: {exc}", allowed_mentions=NO_MENTIONS)
 
