@@ -241,10 +241,14 @@ class EmbedCog(commands.Cog):
             await ctx.reply("You don't have permission to use this command.", mention_author=False)
             return
 
-        await ctx.reply(
+        # Track all messages to delete after successful send
+        cleanup_messages: list[discord.Message] = []
+
+        prompt_msg = await ctx.reply(
             f"Upload your embed file (`.txt`, `.py`, or `.json`) within **{EMBED_WAIT_SECONDS}** seconds.",
             mention_author=False,
         )
+        cleanup_messages.append(prompt_msg)
 
         def check(message: discord.Message) -> bool:
             if message.author.id != ctx.author.id or message.channel.id != ctx.channel.id:
@@ -258,6 +262,8 @@ class EmbedCog(commands.Cog):
         except asyncio.TimeoutError:
             await ctx.send("Timed out. No embed was sent.", allowed_mentions=NO_MENTIONS)
             return
+
+        cleanup_messages.append(upload)  # user's upload message
 
         attachment = upload.attachments[0]
         try:
@@ -285,22 +291,24 @@ class EmbedCog(commands.Cog):
                     for custom_id, backup_id, label in flow_info:
                         backup_map.setdefault(backup_id, []).append((custom_id, label))
 
-                    await ctx.send(
+                    status_msg = await ctx.send(
                         f"🔍 Detected **{len(flow_info)}** flow button(s) backed by "
                         f"**{len(backup_map)}** unique backup message(s).\n"
                         f"I'll ask you to upload the response embed for each backup ID.\n"
                         f"Button responses will be sent **ephemerally** (only the clicker can see them).",
                         allowed_mentions=NO_MENTIONS,
                     )
+                    cleanup_messages.append(status_msg)
 
                     for backup_id, buttons in backup_map.items():
                         button_labels = ", ".join(f"**{lbl}**" for _, lbl in buttons)
-                        await ctx.send(
+                        prompt = await ctx.send(
                             f"📤 **Backup ID: `{backup_id}`** — Used by: {button_labels}\n"
                             f"Upload the response embed file (`.txt`, `.py`, `.json`) "
                             f"within **{EMBED_WAIT_SECONDS}** seconds.",
                             allowed_mentions=NO_MENTIONS,
                         )
+                        cleanup_messages.append(prompt)
 
                         try:
                             resp_upload = await self.bot.wait_for(
@@ -313,6 +321,8 @@ class EmbedCog(commands.Cog):
                                 allowed_mentions=NO_MENTIONS,
                             )
                             continue
+
+                        cleanup_messages.append(resp_upload)  # user's response upload
 
                         resp_attachment = resp_upload.attachments[0]
                         try:
@@ -328,17 +338,19 @@ class EmbedCog(commands.Cog):
                             }
                             for custom_id, _ in buttons:
                                 button_responses[custom_id] = response_entry
-                            await ctx.send(
+                            ok_msg = await ctx.send(
                                 f"✅ Stored response for backup `{backup_id}` "
                                 f"(applied to {len(buttons)} button(s)).",
                                 allowed_mentions=NO_MENTIONS,
                             )
+                            cleanup_messages.append(ok_msg)
                         except Exception as exc:
-                            await ctx.send(
+                            fail_msg = await ctx.send(
                                 f"❌ Invalid response embed for backup `{backup_id}`: {exc}\n"
                                 f"Skipping.",
                                 allowed_mentions=NO_MENTIONS,
                             )
+                            cleanup_messages.append(fail_msg)
 
         # Send the main embed
         try:
@@ -349,10 +361,27 @@ class EmbedCog(commands.Cog):
             self.bot.add_view(view, message_id=sent_msg.id)
             _store_view_record(text, ctx.channel.id, sent_msg.id, button_responses or None)
 
+            # Delete the original command message and all intermediate messages
+            try:
+                await ctx.message.delete()
+            except Exception:
+                pass
+            for msg in cleanup_messages:
+                try:
+                    await msg.delete()
+                except Exception:
+                    pass
+
+            # Send a single clean confirmation (will auto-delete after 5s)
             parts = ["✅ Embed sent."]
             if button_responses:
                 parts.append(f" ({len(button_responses)} button response(s) registered)")
-            await ctx.send("".join(parts), allowed_mentions=NO_MENTIONS)
+            confirm = await ctx.send("".join(parts), allowed_mentions=NO_MENTIONS)
+            await asyncio.sleep(5)
+            try:
+                await confirm.delete()
+            except Exception:
+                pass
 
         except Exception as exc:
             await ctx.send(f"Failed to send embed: {exc}", allowed_mentions=NO_MENTIONS)
