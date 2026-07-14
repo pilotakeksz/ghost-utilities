@@ -21,9 +21,10 @@ PERSISTENT_VIEWS_FILE = os.path.join(
 )
 
 
-def _extract_flow_buttons(data: dict) -> list[dict]:
-    """Extract button data for buttons that have a flow action (type 6 = Send Message)."""
-    flow_buttons = []
+def _extract_flow_backup_ids(data: dict) -> list[tuple[str, str, str]]:
+    """Extract (custom_id, backupId, label) for buttons with flow type 6 actions.
+    backupId is the channel reference the flow sends to."""
+    results: list[tuple[str, str, str]] = []
     for component in data.get("components", []):
         if component.get("type") == 1:  # Action Row
             for btn in component.get("components", []):
@@ -33,9 +34,15 @@ def _extract_flow_buttons(data: dict) -> list[dict]:
                         actions = flow.get("actions", [])
                         for action in actions:
                             if action.get("type") == 6:  # Send Message flow action
-                                flow_buttons.append(btn)
+                                backup_id = str(action.get("backupId", ""))
+                                if backup_id:
+                                    results.append((
+                                        btn.get("custom_id", ""),
+                                        backup_id,
+                                        btn.get("label", "Unnamed Button"),
+                                    ))
                                 break
-    return flow_buttons
+    return results
 
 
 def _layout_view_from_json(data: dict[str, Any]) -> ui.LayoutView:
@@ -276,23 +283,25 @@ class EmbedCog(commands.Cog):
                 data = None
 
             if data and isinstance(data, dict):
-                flow_buttons = _extract_flow_buttons(data)
-                if flow_buttons:
+                flow_info = _extract_flow_backup_ids(data)
+                if flow_info:
+                    # Group by backupId — multiple buttons can share the same backup
+                    backup_map: dict[str, list[tuple[str, str]]] = {}
+                    for custom_id, backup_id, label in flow_info:
+                        backup_map.setdefault(backup_id, []).append((custom_id, label))
+
                     await ctx.send(
-                        f"🔍 Detected **{len(flow_buttons)}** button(s) with flows. "
-                        f"I'll now ask you to upload the response embed for each button.\n"
+                        f"🔍 Detected **{len(flow_info)}** flow button(s) backed by "
+                        f"**{len(backup_map)}** unique backup message(s).\n"
+                        f"I'll ask you to upload the response embed for each backup ID.\n"
                         f"Button responses will be sent **ephemerally** (only the clicker can see them).",
                         allowed_mentions=NO_MENTIONS,
                     )
 
-                    for btn in flow_buttons:
-                        label = btn.get("label", "Unnamed Button")
-                        custom_id = btn.get("custom_id", "")
-                        emoji = btn.get("emoji", {})
-                        emoji_str = f":{emoji.get('name', '')}:" if emoji.get("name") else ""
-
+                    for backup_id, buttons in backup_map.items():
+                        button_labels = ", ".join(f"**{lbl}**" for _, lbl in buttons)
                         await ctx.send(
-                            f"📤 **Button: {emoji_str} {label}** (`{custom_id}`)\n"
+                            f"📤 **Backup ID: `{backup_id}`** — Used by: {button_labels}\n"
                             f"Upload the response embed file (`.txt`, `.py`, `.json`) "
                             f"within **{EMBED_WAIT_SECONDS}** seconds.",
                             allowed_mentions=NO_MENTIONS,
@@ -304,8 +313,8 @@ class EmbedCog(commands.Cog):
                             )
                         except asyncio.TimeoutError:
                             await ctx.send(
-                                f"⏱️ Timed out waiting for response embed for **{label}**. "
-                                f"Skipping this button.",
+                                f"⏱️ Timed out waiting for backup `{backup_id}`. "
+                                f"Skipping all buttons referencing this backup.",
                                 allowed_mentions=NO_MENTIONS,
                             )
                             continue
@@ -316,18 +325,23 @@ class EmbedCog(commands.Cog):
                             resp_text = resp_raw.decode("utf-8")
                             # Validate it parses correctly
                             _parse_embed_file(resp_text)
-                            button_responses[custom_id] = {
+                            # Store the response for EACH button that uses this backupId
+                            response_entry = {
                                 "source": resp_text,
                                 "ephemeral": True,
+                                "backup_id": backup_id,
                             }
+                            for custom_id, _ in buttons:
+                                button_responses[custom_id] = response_entry
                             await ctx.send(
-                                f"✅ Stored response for **{label}**.",
+                                f"✅ Stored response for backup `{backup_id}` "
+                                f"(applied to {len(buttons)} button(s)).",
                                 allowed_mentions=NO_MENTIONS,
                             )
                         except Exception as exc:
                             await ctx.send(
-                                f"❌ Invalid response embed for **{label}**: {exc}\n"
-                                f"Skipping this button.",
+                                f"❌ Invalid response embed for backup `{backup_id}`: {exc}\n"
+                                f"Skipping.",
                                 allowed_mentions=NO_MENTIONS,
                             )
 
