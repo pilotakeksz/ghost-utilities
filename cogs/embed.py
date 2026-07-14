@@ -152,65 +152,14 @@ def _load_view_records() -> list[dict[str, Any]]:
         return []
 
 
-class FlowButtonView(ui.LayoutView):
-    """A persistent LayoutView that renders a Components V2 layout and handles flow button clicks."""
-
-    def __init__(self, data: dict, responses: dict[str, dict[str, Any]]):
-        super().__init__(timeout=None)
-        self.responses = responses
-        self._build_from_json(data)
-
-    def _build_from_json(self, data: dict) -> None:
-        """Rebuild the layout from JSON, attaching callbacks to flow buttons."""
-        for comp_data in data.get("components", []):
-            component = _component_factory(comp_data, None)
-            if component is None:
-                continue
-            item = _component_to_item(component)
-
-            # If this is a button with a flow response, attach a callback
-            if hasattr(item, "custom_id") and item.custom_id in self.responses:
-                item.callback = self._make_callback(item.custom_id)
-
-            self.add_item(item)
-
-    async def on_error(self, interaction: discord.Interaction, error: Exception, item) -> None:
-        """Handle errors gracefully so the user sees feedback instead of silence."""
-        try:
-            await interaction.response.send_message(
-                f"❌ An error occurred: {error}", ephemeral=True
-            )
-        except Exception:
-            pass
-
-    def _make_callback(self, custom_id: str):
-        """Create a callback that sends the stored response embed as ephemeral."""
-        async def callback(interaction: discord.Interaction) -> None:
-            response = self.responses.get(custom_id)
-            if not response:
-                await interaction.response.send_message(
-                    "❌ No response configured for this button.", ephemeral=True
-                )
-                return
-
-            source = response.get("source", "")
-            if not source:
-                await interaction.response.send_message(
-                    "❌ Response source is empty.", ephemeral=True
-                )
-                return
-
-            try:
-                view = _parse_embed_file(source)
-                await interaction.response.send_message(
-                    view=view, ephemeral=True, allowed_mentions=NO_MENTIONS
-                )
-            except Exception as exc:
-                await interaction.response.send_message(
-                    f"❌ Failed to load response embed: {exc}", ephemeral=True
-                )
-
-        return callback
+def _build_flow_response_map() -> dict[str, dict[str, Any]]:
+    """Build a mapping of custom_id -> response data from all stored records."""
+    result: dict[str, dict[str, Any]] = {}
+    records = _load_view_records()
+    for record in records:
+        responses = record.get("button_responses") or {}
+        result.update(responses)
+    return result
 
 
 class EmbedCog(commands.Cog):
@@ -232,17 +181,7 @@ class EmbedCog(commands.Cog):
                 failed += 1
                 continue
             try:
-                button_responses = record.get("button_responses") or {}
-                if button_responses:
-                    # Use FlowButtonView to handle button interactions
-                    data = json.loads(source) if source.strip().startswith("{") else None
-                    if data and isinstance(data, dict):
-                        view = FlowButtonView(data, button_responses)
-                    else:
-                        # Python-based embeds with flows aren't supported for button responses
-                        view = _parse_embed_file(source)
-                else:
-                    view = _parse_embed_file(source)
+                view = _parse_embed_file(source)
 
                 message_id = record.get("message_id")
                 if message_id:
@@ -255,6 +194,43 @@ class EmbedCog(commands.Cog):
                 print(f"[EmbedCog] Failed to re-register persistent view (msg {record.get('message_id')}): {exc}")
 
         print(f"[EmbedCog] Re-registered {registered} persistent views ({failed} failed).")
+
+    @commands.Cog.listener()
+    async def on_interaction(self, interaction: discord.Interaction) -> None:
+        """Listen for button interactions and handle flow button clicks."""
+        if interaction.type != discord.InteractionType.component:
+            return
+
+        custom_id = interaction.data.get("custom_id") if interaction.data else None
+        if not custom_id:
+            return
+
+        # Check if this custom_id has a stored flow response
+        flow_responses = _build_flow_response_map()
+        response = flow_responses.get(custom_id)
+        if not response:
+            return  # Not a flow button we manage
+
+        # Defer and respond with the stored response embed ephemerally
+        try:
+            source = response.get("source", "")
+            if not source:
+                await interaction.response.send_message(
+                    "❌ Response source is empty.", ephemeral=True
+                )
+                return
+
+            response_view = _parse_embed_file(source)
+            await interaction.response.send_message(
+                view=response_view, ephemeral=True, allowed_mentions=NO_MENTIONS
+            )
+        except Exception as exc:
+            try:
+                await interaction.response.send_message(
+                    f"❌ Failed to load response: {exc}", ephemeral=True
+                )
+            except Exception:
+                pass
 
     @commands.command(name="embed")
     async def embed(self, ctx: commands.Context):
@@ -366,12 +342,7 @@ class EmbedCog(commands.Cog):
 
         # Send the main embed
         try:
-            if data and isinstance(data, dict) and button_responses:
-                # Use FlowButtonView to handle button interactions
-                view = FlowButtonView(data, button_responses)
-            else:
-                view = _parse_embed_file(text)
-
+            view = _parse_embed_file(text)
             sent_msg = await ctx.channel.send(view=view, allowed_mentions=NO_MENTIONS)
 
             # Register as a persistent view and persist to disk for restart recovery
