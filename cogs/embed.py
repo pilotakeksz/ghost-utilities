@@ -152,8 +152,8 @@ def _load_view_records() -> list[dict[str, Any]]:
         return []
 
 
-class FlowButtonView(ui.View):
-    """A persistent view that renders a Components V2 layout and handles flow button clicks."""
+class FlowButtonView(ui.LayoutView):
+    """A persistent LayoutView that renders a Components V2 layout and handles flow button clicks."""
 
     def __init__(self, data: dict, responses: dict[str, dict[str, Any]]):
         super().__init__(timeout=None)
@@ -173,6 +173,15 @@ class FlowButtonView(ui.View):
                 item.callback = self._make_callback(item.custom_id)
 
             self.add_item(item)
+
+    async def on_error(self, interaction: discord.Interaction, error: Exception, item) -> None:
+        """Handle errors gracefully so the user sees feedback instead of silence."""
+        try:
+            await interaction.response.send_message(
+                f"❌ An error occurred: {error}", ephemeral=True
+            )
+        except Exception:
+            pass
 
     def _make_callback(self, custom_id: str):
         """Create a callback that sends the stored response embed as ephemeral."""
