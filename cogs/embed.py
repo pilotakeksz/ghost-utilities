@@ -23,25 +23,35 @@ PERSISTENT_VIEWS_FILE = os.path.join(
 
 def _extract_flow_backup_ids(data: dict) -> list[tuple[str, str, str]]:
     """Extract (custom_id, backupId, label) for buttons with flow type 6 actions.
-    backupId is the channel reference the flow sends to."""
+    Recursively searches through all nesting levels (containers, action rows, etc.)."""
     results: list[tuple[str, str, str]] = []
-    for component in data.get("components", []):
-        if component.get("type") == 1:  # Action Row
-            for btn in component.get("components", []):
-                if btn.get("type") == 2:  # Button
-                    flow = btn.get("flow")
-                    if flow and isinstance(flow, dict):
-                        actions = flow.get("actions", [])
-                        for action in actions:
-                            if action.get("type") == 6:  # Send Message flow action
-                                backup_id = str(action.get("backupId", ""))
-                                if backup_id:
-                                    results.append((
-                                        btn.get("custom_id", ""),
-                                        backup_id,
-                                        btn.get("label", "Unnamed Button"),
-                                    ))
-                                break
+
+    def _recurse(components_list: list) -> None:
+        for component in components_list:
+            comp_type = component.get("type")
+            # Action Row (type 1) — check its buttons
+            if comp_type == 1:
+                for btn in component.get("components", []):
+                    if btn.get("type") == 2:  # Button
+                        flow = btn.get("flow")
+                        if flow and isinstance(flow, dict):
+                            actions = flow.get("actions", [])
+                            for action in actions:
+                                if action.get("type") == 6:  # Send Message flow action
+                                    backup_id = str(action.get("backupId", ""))
+                                    if backup_id:
+                                        results.append((
+                                            btn.get("custom_id", ""),
+                                            backup_id,
+                                            btn.get("label", "Unnamed Button"),
+                                        ))
+                                    break
+            # Container types (e.g. type 17) — recurse into their components
+            inner = component.get("components")
+            if inner and isinstance(inner, list):
+                _recurse(inner)
+
+    _recurse(data.get("components", []))
     return results
 
 
