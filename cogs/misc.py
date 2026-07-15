@@ -929,11 +929,11 @@ class MiscCog(commands.Cog):
     @tuna.command(name="unlock")
     @commands.has_guild_permissions(administrator=True)
     async def tuna_unlock(self, ctx, channel: discord.TextChannel = None):
-        """Unlock a channel by restoring send_messages to @everyone. (admins only)"""
+        """Unlock a channel by granting send_messages to @everyone (does not grant view_channel). (admins only)"""
         channel = channel or ctx.channel
         try:
             everyone = ctx.guild.default_role
-            await channel.set_permissions(everyone, send_messages=None)
+            await channel.set_permissions(everyone, send_messages=True, view_channel=None)
             await ctx.send(f"🔓 {channel.mention} has been unlocked.")
         except discord.Forbidden:
             await ctx.send("❌ I don't have permission to manage this channel.")
