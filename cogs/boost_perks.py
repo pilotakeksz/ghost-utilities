@@ -442,6 +442,15 @@ class BoostPerksCog(commands.Cog):
         else:
             await ctx.send(f"❌ An error occurred: {error}")
 
+    def _infer_tier_from_roles(self, member: discord.Member) -> int:
+        """Infer a booster's tier from their existing booster roles.
+        Returns 0-3. Used when a user is actively boosting but has no stored boost count."""
+        current_ids = {r.id for r in member.roles}
+        for tier, rids in [(3, [ROLE_3_BOOST]), (2, [ROLE_2_BOOST]), (1, [ROLE_1_BOOST_A, ROLE_1_BOOST_B])]:
+            if any(rid in current_ids for rid in rids):
+                return tier
+        return 1  # Actively boosting but no booster roles = minimum tier 1
+
     @commands.command(name="boostrefresh")
     @commands.has_guild_permissions(administrator=True)
     async def boost_refresh(self, ctx: commands.Context) -> None:
@@ -451,6 +460,7 @@ class BoostPerksCog(commands.Cog):
         if not guild:
             return
 
+        # Gather members
         status = await ctx.send("🔄 Scanning all members for boost status...")
 
         boosting_members = []
@@ -466,17 +476,75 @@ class BoostPerksCog(commands.Cog):
                 non_boosting_with_roles.append(member)
 
         total = len(boosting_members) + len(non_boosting_with_roles)
+        if total == 0:
+            await status.edit(content="✅ No members need booster role updates.")
+            return
+
+        # Ensure every boosting member has at least 1 stored boost count
+        for member in boosting_members:
+            count = _get_user_boost_count(member.id)
+            if count < 1:
+                # Infer from existing roles
+                inferred = self._infer_tier_from_roles(member)
+                counts = _load_boost_counts()
+                counts[str(member.id)] = inferred
+                _save_boost_counts(counts)
+
+        # Compute summary for approval
+        boosting_tier_summary = {1: 0, 2: 0, 3: 0}
+        for member in boosting_members:
+            tier = self._get_boost_tier(member)
+            boosting_tier_summary[tier] = boosting_tier_summary.get(tier, 0) + 1
+
+        summary_lines = [
+            f"**{len(boosting_members)}** boosters will have roles synced and receive a thank-you DM.",
+            f"**{len(non_boosting_with_roles)}** non-boosters with stale roles will be cleaned up.",
+            "",
+            "Booster breakdown:",
+            f"  Tier 1: {boosting_tier_summary.get(1, 0)}",
+            f"  Tier 2: {boosting_tier_summary.get(2, 0)}",
+            f"  Tier 3: {boosting_tier_summary.get(3, 0)}",
+        ]
+
+        if non_boosting_with_roles:
+            stale_with_3 = sum(
+                1 for m in non_boosting_with_roles
+                if ROLE_3_BOOST in {r.id for r in m.roles} and _bot_gave_role(m.id, ROLE_3_BOOST)
+            )
+            if stale_with_3:
+                summary_lines.append(
+                    f"  ⚠️ {stale_with_3} non-booster(s) have the exclusive role (will be removed)"
+                )
+
+        import uuid
+        token = uuid.uuid4().hex[:8].upper()
+        confirm_embed = discord.Embed(
+            title="⚠️ Confirm Boost Refresh",
+            description="\n".join(summary_lines) + f"\n\nTo confirm, type the following token in this channel:\n```{token}```",
+            color=discord.Color.gold()
+        )
+        await status.edit(content=None, embed=confirm_embed)
+
+        def check(m: discord.Message):
+            return m.author.id == ctx.author.id and m.channel.id == ctx.channel.id
+
+        try:
+            msg = await self.bot.wait_for("message", check=check, timeout=60)
+        except Exception:
+            await ctx.send("⏰ Timed out. No changes were made.")
+            return
+
+        if msg.content.strip() != token:
+            await ctx.send("❌ Token mismatch. No changes were made.")
+            return
+
+        # Execute
+        status = await ctx.send("🔄 Executing boost refresh...")
         processed = 0
         synced = 0
         dmed = 0
         cleaned = 0
         failed = 0
-
-        await status.edit(
-            content=f"🔄 Processing **{total}** member(s) — "
-                    f"{len(boosting_members)} boosting, "
-                    f"{len(non_boosting_with_roles)} with stale roles..."
-        )
 
         for member in boosting_members:
             try:
