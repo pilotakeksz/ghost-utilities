@@ -490,31 +490,49 @@ class BoostPerksCog(commands.Cog):
                 counts[str(member.id)] = inferred
                 _save_boost_counts(counts)
 
-        # Compute summary for approval
-        boosting_tier_summary = {1: 0, 2: 0, 3: 0}
+        # Compute per-user breakdowns for approval
+        booster_details = []
         for member in boosting_members:
+            count = _get_user_boost_count(member.id)
             tier = self._get_boost_tier(member)
-            boosting_tier_summary[tier] = boosting_tier_summary.get(tier, 0) + 1
+            if count < 1:
+                count = self._infer_tier_from_roles(member)
+                tier = count
+            booster_details.append((member, count, tier))
 
+        stale_details = []
+        for member in non_boosting_with_roles:
+            roles_to_remove = []
+            for rid in ALL_BOOSTER_ROLES:
+                if rid in {r.id for r in member.roles} and _bot_gave_role(member.id, rid):
+                    r = ctx.guild.get_role(rid)
+                    if r:
+                        roles_to_remove.append(r.name)
+            stale_details.append((member.mention, roles_to_remove))
+
+        # Build summary
         summary_lines = [
-            f"**{len(boosting_members)}** boosters will have roles synced and receive a thank-you DM.",
-            f"**{len(non_boosting_with_roles)}** non-boosters with stale roles will be cleaned up.",
-            "",
-            "Booster breakdown:",
-            f"  Tier 1: {boosting_tier_summary.get(1, 0)}",
-            f"  Tier 2: {boosting_tier_summary.get(2, 0)}",
-            f"  Tier 3: {boosting_tier_summary.get(3, 0)}",
+            f"**{len(boosting_members)}** actively boosting members will be processed:",
         ]
 
-        if non_boosting_with_roles:
-            stale_with_3 = sum(
-                1 for m in non_boosting_with_roles
-                if ROLE_3_BOOST in {r.id for r in m.roles} and _bot_gave_role(m.id, ROLE_3_BOOST)
-            )
-            if stale_with_3:
-                summary_lines.append(
-                    f"  ⚠️ {stale_with_3} non-booster(s) have the exclusive role (will be removed)"
-                )
+        # Show boosting members breakdown (up to 15 to avoid huge messages)
+        for member, count, tier in booster_details[:15]:
+            summary_lines.append(f"  • {member.mention} — {count} boost{'s' if count != 1 else ''}, Tier {tier}")
+        if len(booster_details) > 15:
+            summary_lines.append(f"  ... and {len(booster_details) - 15} more boosters")
+
+        summary_lines.append("")
+        summary_lines.append(f"**{len(non_boosting_with_roles)}** non-boosters with bot-assigned roles to clean:")
+        for mention, roles in stale_details[:15]:
+            if roles:
+                summary_lines.append(f"  • {mention} — will lose: {', '.join(roles)}")
+            else:
+                summary_lines.append(f"  • {mention} — no bot-assigned roles (nothing to remove)")
+        if len(stale_details) > 15:
+            summary_lines.append(f"  ... and {len(stale_details) - 15} more non-boosters")
+
+        summary_lines.append("")
+        summary_lines.append("⚠️ Only roles the bot gave will be removed from non-boosters.")
 
         import uuid
         token = uuid.uuid4().hex[:8].upper()
