@@ -308,11 +308,9 @@ class BoostPerksCog(commands.Cog):
         if before.premium_since == after.premium_since:
             return
 
-        # Track individual boost count
+        # Track lifetime boost count (only increment - never decrement)
         if after.premium_since is not None and before.premium_since is None:
-            new_count = _increment_boost(after.id)
-        elif after.premium_since is None and before.premium_since is not None:
-            _decrement_boost(after.id)
+            _increment_boost(after.id)
 
         await self._sync_booster_roles(after)
 
