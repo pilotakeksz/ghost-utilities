@@ -32,33 +32,50 @@ class MassRoleCog(commands.Cog):
                 )
             ]
             if dangerous:
-                await ctx.send(
-                    f"❌ Target role has sensitive permissions: `{', '.join(dangerous)}`. "
-                    f"This command cannot assign roles with elevated permissions."
+                embed = discord.Embed(
+                    title="❌ Invalid Target Role",
+                    description=(
+                        f"Target role has sensitive permissions: `{', '.join(dangerous)}`. "
+                        "This command cannot assign roles with elevated permissions."
+                    ),
+                    color=discord.Color.red()
                 )
+                await ctx.send(embed=embed)
                 return
 
         bot_top_role = guild.me.top_role
         if target_role >= bot_top_role:
-            await ctx.send(
-                f"❌ **{target_role.name}** is at or above my highest role. I can't assign it."
+            embed = discord.Embed(
+                title="❌ Cannot Assign Role",
+                description=f"**{target_role.name}** is at or above my highest role. I can't assign it.",
+                color=discord.Color.red()
             )
+            await ctx.send(embed=embed)
             return
 
         members = [m for m in source_role.members if target_role not in m.roles]
 
         if not members:
-            await ctx.send(f"No members with {source_role.mention} are missing {target_role.mention}.")
+            embed = discord.Embed(
+                title="✅ No Action Needed",
+                description=f"No members with {source_role.mention} are missing {target_role.mention}.",
+                color=discord.Color.green()
+            )
+            await ctx.send(embed=embed)
             return
 
         token = uuid.uuid4().hex[:8].upper()
-        await ctx.send(
-            f"You are about to give **{target_role.mention}** to **{len(members)}** member(s) "
-            f"who have **{source_role.mention}**.\n\n"
-            f"To confirm, type the following token in this channel:\n"
-            f"```{token}```",
-            allowed_mentions=discord.AllowedMentions.none()
+        confirm_embed = discord.Embed(
+            title="⚠️ Confirm Mass Role Assignment",
+            description=(
+                f"You are about to give **{target_role.name}** to **{len(members)}** member(s) "
+                f"who have **{source_role.name}**.\n\n"
+                f"To confirm, type the following token in this channel:\n"
+                f"```{token}```"
+            ),
+            color=discord.Color.gold()
         )
+        await ctx.send(embed=confirm_embed)
 
         def check(m: discord.Message):
             return m.author.id == ctx.author.id and m.channel.id == ctx.channel.id
@@ -66,14 +83,29 @@ class MassRoleCog(commands.Cog):
         try:
             msg = await self.bot.wait_for("message", check=check, timeout=60)
         except Exception:
-            await ctx.send("⏰ Timed out. No roles were assigned.")
+            timeout_embed = discord.Embed(
+                title="⏰ Timed Out",
+                description="No roles were assigned.",
+                color=discord.Color.red()
+            )
+            await ctx.send(embed=timeout_embed)
             return
 
         if msg.content.strip() != token:
-            await ctx.send("❌ Token mismatch. No roles were assigned.")
+            mismatch_embed = discord.Embed(
+                title="❌ Token Mismatch",
+                description="No roles were assigned.",
+                color=discord.Color.red()
+            )
+            await ctx.send(embed=mismatch_embed)
             return
 
-        status = await ctx.send(f"⏳ Assigning {target_role.mention} to {len(members)} member(s)...")
+        status_embed = discord.Embed(
+            title="⏳ Assigning Roles...",
+            description=f"Assigning **{target_role.name}** to **{len(members)}** member(s)...",
+            color=discord.Color.blurple()
+        )
+        status = await ctx.send(embed=status_embed)
         success = 0
         failed = 0
         for member in members:
@@ -83,10 +115,15 @@ class MassRoleCog(commands.Cog):
             except Exception:
                 failed += 1
 
-        lines = [f"✅ Done. Assigned **{target_role.name}** to **{success}** member(s)."]
-        if failed:
-            lines.append(f"⚠️ Failed for {failed} member(s) (missing permissions or left server).")
-        await status.edit(content="\n".join(lines))
+        result_embed = discord.Embed(
+            title="✅ Mass Role Complete",
+            color=discord.Color.green()
+        )
+        result_embed.add_field(name="Role Assigned", value=target_role.name, inline=True)
+        result_embed.add_field(name="Source Role", value=source_role.name, inline=True)
+        result_embed.add_field(name="Success", value=str(success), inline=True)
+        result_embed.add_field(name="Failed", value=str(failed), inline=True)
+        await status.edit(embed=result_embed)
 
 
 async def setup(bot: commands.Bot):

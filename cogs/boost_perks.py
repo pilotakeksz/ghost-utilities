@@ -1,0 +1,231 @@
+
+import discord
+from discord.ext import commands
+
+
+# ── Role IDs ──────────────────────────────────────────────────────────────
+ROLE_1_BOOST_A = 1399135941775593572   # Music Bot Access
+ROLE_1_BOOST_B = 1349462336951554189   # 1 boost role
+ROLE_2_BOOST   = 1426716068638101624   # 2 boost role
+ROLE_3_BOOST   = 1398817408306647132   # 3+ boost / office key
+
+ALL_BOOSTER_ROLES = {
+    ROLE_1_BOOST_A,
+    ROLE_1_BOOST_B,
+    ROLE_2_BOOST,
+    ROLE_3_BOOST,
+}
+
+# (min_boosts, roles_to_add) — best match wins
+BOOST_TIERS = [
+    (3, [ROLE_3_BOOST, ROLE_2_BOOST, ROLE_1_BOOST_A, ROLE_1_BOOST_B]),
+    (2, [ROLE_2_BOOST, ROLE_1_BOOST_A, ROLE_1_BOOST_B]),
+    (1, [ROLE_1_BOOST_A, ROLE_1_BOOST_B]),
+]
+
+THANK_YOU_IMAGE_URL = "https://cdn.discordapp.com/attachments/1399369851520290836/1527131305978892329/Templateeee.png"
+HICOM_CHANNEL_ID = 1317963319172137103
+
+
+class BoostPerksCog(commands.Cog):
+    def __init__(self, bot: commands.Bot):
+        self.bot = bot
+
+    # ── Tier helpers ─────────────────────────────────────────────────────
+
+    def _get_boost_tier(self, member: discord.Member) -> int:
+        """Return the highest boost tier (0-3) the member qualifies for."""
+        if not member.premium_since:
+            return 0
+        g = member.guild
+        if not g:
+            return 0
+        gb = g.premium_subscription_count or 0
+        if gb >= 3:
+            return 3
+        if gb >= 2:
+            return 2
+        if gb >= 1:
+            return 1
+        return 0
+
+    def _tier_roles(self, tier: int) -> list[int]:
+        """Return role IDs for a given tier (1-3)."""
+        for min_b, rids in BOOST_TIERS:
+            if tier >= min_b:
+                return list(rids)
+        return []
+
+    # ── Role assignment ──────────────────────────────────────────────────
+
+    async def _sync_booster_roles(self, member: discord.Member) -> None:
+        """Remove or assign booster roles based on current boost status."""
+        guild = member.guild
+        if not guild:
+            return
+
+        current_ids = {r.id for r in member.roles}
+        is_boosting = member.premium_since is not None
+
+        if not is_boosting:
+            # Remove all booster roles
+            to_remove = [
+                guild.get_role(rid) for rid in ALL_BOOSTER_ROLES
+                if rid in current_ids and guild.get_role(rid)
+            ]
+            if to_remove:
+                try:
+                    await member.remove_roles(
+                        *to_remove,
+                        reason="Stopped boosting — removed booster roles"
+                    )
+                except Exception:
+                    pass
+            return
+
+        tier = self._get_boost_tier(member)
+        target_ids = set(self._tier_roles(tier))
+
+        to_add = []
+        for rid in target_ids:
+            if rid not in current_ids:
+                r = guild.get_role(rid)
+                if r:
+                    to_add.append(r)
+
+        # Remove roles the user shouldn't have at this tier
+        to_remove = []
+        for rid in ALL_BOOSTER_ROLES:
+            if rid not in target_ids and rid in current_ids:
+                r = guild.get_role(rid)
+                if r:
+                    to_remove.append(r)
+
+        if to_add:
+            try:
+                await member.add_roles(*to_add, reason=f"Booster tier {tier}")
+            except Exception:
+                pass
+        if to_remove:
+            try:
+                await member.remove_roles(*to_remove, reason=f"Booster tier {tier} — downgrade")
+            except Exception:
+                pass
+
+    # ── DM helpers ───────────────────────────────────────────────────────
+
+    async def _dm_boost_started(self, member: discord.Member, tier: int) -> None:
+        embed = discord.Embed(
+            title="🎉 Thank You for Boosting!",
+            description=(
+                f"Thank you for boosting **{member.guild.name}**!\n"
+                f"You've unlocked **Tier {tier}** booster perks and your roles "
+                f"have been assigned automatically."
+            ),
+            color=discord.Color.from_str("#ff73fa"),
+        )
+        embed.set_image(url=THANK_YOU_IMAGE_URL)
+        if tier >= 3:
+            embed.add_field(
+                name="<:Panic:1482070572606423103> Claim Your Office Key",
+                value=(
+                    "You've unlocked the **3+ Boost** tier, which includes "
+                    "your very own office and office key!\n"
+                    f"Please open a ticket in <#{HICOM_CHANNEL_ID}> to claim it."
+                ),
+                inline=False,
+            )
+        try:
+            await member.send(embed=embed)
+        except Exception:
+            pass
+
+    async def _dm_boost_lost(self, member: discord.Member) -> None:
+        embed = discord.Embed(
+            title="Boost Removed",
+            description=(
+                f"It looks like you've stopped boosting **{member.guild.name}**.\n"
+                "Your booster roles have been removed.\n\n"
+                "If you'd like to boost again you're always welcome!"
+            ),
+            color=discord.Color.red(),
+        )
+        try:
+            await member.send(embed=embed)
+        except Exception:
+            pass
+
+    # ── Listeners ────────────────────────────────────────────────────────
+
+    @commands.Cog.listener()
+    async def on_member_update(self, before: discord.Member, after: discord.Member) -> None:
+        if before.premium_since == after.premium_since:
+            return
+
+        await self._sync_booster_roles(after)
+
+        if after.premium_since is not None:
+            tier = self._get_boost_tier(after)
+            await self._dm_boost_started(after, tier)
+        else:
+            await self._dm_boost_lost(after)
+
+    @commands.Cog.listener()
+    async def on_member_join(self, member: discord.Member) -> None:
+        if member.premium_since is not None:
+            await self._sync_booster_roles(member)
+
+    # ── Admin test command ───────────────────────────────────────────────
+
+    @commands.command(name="boosttest")
+    @commands.has_guild_permissions(administrator=True)
+    async def boost_test(self, ctx: commands.Context, member: discord.Member = None) -> None:
+        """Test boost perk role assignment. (admins only)
+        Usage: !boosttest [@user]"""
+        target = member or ctx.author
+
+        is_boosting = target.premium_since is not None
+        tier = self._get_boost_tier(target) if is_boosting else 0
+
+        embed = discord.Embed(
+            title="Boost Perk Test",
+            description=f"Testing boost perks for {target.mention}",
+            color=discord.Color.blurple(),
+        )
+        embed.add_field(name="Currently Boosting", value="✅ Yes" if is_boosting else "❌ No", inline=True)
+        embed.add_field(name="Boost Tier", value=str(tier) if is_boosting else "N/A", inline=True)
+        embed.add_field(name="Guild Boost Count", value=str(ctx.guild.premium_subscription_count or 0), inline=True)
+
+        current_role_list = []
+        target_ids = {r.id for r in target.roles}
+        for rid in ALL_BOOSTER_ROLES:
+            r = ctx.guild.get_role(rid)
+            if r:
+                has = "✅" if rid in target_ids else "❌"
+                current_role_list.append(f"{has} {r.mention}")
+        embed.add_field(
+            name="Current Booster Roles",
+            value="\n".join(current_role_list) if current_role_list else "None",
+            inline=False,
+        )
+
+        if is_boosting:
+            tier_roles = self._tier_roles(tier)
+            embed.add_field(
+                name="Roles That Would Be Assigned",
+                value="\n".join(f"• <@&{rid}>" for rid in tier_roles) or "None",
+                inline=False,
+            )
+
+        await ctx.send(embed=embed)
+
+    @boost_test.error
+    async def boost_test_error(self, ctx: commands.Context, error: Exception) -> None:
+        if isinstance(error, commands.MissingPermissions):
+            await ctx.send("❌ You need administrator permissions to use this command.")
+        else:
+            await ctx.send(f"❌ An error occurred: {error}")
+
+
+async def setup(bot: commands.Bot) -> None:
+    await bot.add_cog(BoostPerksCog(bot))
