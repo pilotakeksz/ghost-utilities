@@ -1,5 +1,8 @@
+from __future__ import annotations
 
 import asyncio
+import json
+import os
 import discord
 from discord.ext import commands
 
@@ -26,6 +29,59 @@ BOOST_TIERS = [
 
 THANK_YOU_IMAGE_URL = "https://cdn.discordapp.com/attachments/1399369851520290836/1527131305978892329/Templateeee.png"
 HICOM_CHANNEL_ID = 1317963319172137103
+BOOST_COUNTS_FILE = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..", "data", "boost_counts.json"
+)
+
+
+def _load_boost_counts() -> dict[str, int]:
+    """Load per-user boost counts from disk."""
+    if not os.path.exists(BOOST_COUNTS_FILE):
+        return {}
+    try:
+        with open(BOOST_COUNTS_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            return {str(k): int(v) for k, v in data.items()}
+    except Exception:
+        pass
+    return {}
+
+
+def _save_boost_counts(data: dict[str, int]) -> None:
+    """Save per-user boost counts to disk."""
+    os.makedirs(os.path.dirname(BOOST_COUNTS_FILE), exist_ok=True)
+    with open(BOOST_COUNTS_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+
+
+def _increment_boost(user_id: int) -> int:
+    """Increment a user's lifetime boost count and return the new count."""
+    counts = _load_boost_counts()
+    key = str(user_id)
+    current = counts.get(key, 0)
+    counts[key] = current + 1
+    _save_boost_counts(counts)
+    return counts[key]
+
+
+def _decrement_boost(user_id: int) -> int:
+    """Decrement a user's lifetime boost count and return the new count."""
+    counts = _load_boost_counts()
+    key = str(user_id)
+    current = counts.get(key, 0)
+    if current > 0:
+        counts[key] = current - 1
+    else:
+        counts[key] = 0
+    _save_boost_counts(counts)
+    return counts[key]
+
+
+def _get_user_boost_count(user_id: int) -> int:
+    """Get the total lifetime boost count for a user."""
+    counts = _load_boost_counts()
+    return counts.get(str(user_id), 0)
 
 
 class BoostPerksCog(commands.Cog):
@@ -35,18 +91,26 @@ class BoostPerksCog(commands.Cog):
     # ── Tier helpers ─────────────────────────────────────────────────────
 
     def _get_boost_tier(self, member: discord.Member) -> int:
-        """Return the highest boost tier (0-3) the member qualifies for."""
+        """Return the highest boost tier (0-3) the member qualifies for
+        based on their total lifetime boost count."""
         if not member.premium_since:
             return 0
-        g = member.guild
-        if not g:
-            return 0
-        gb = g.premium_subscription_count or 0
-        if gb >= 3:
+        total_boosts = _get_user_boost_count(member.id)
+        if total_boosts >= 3:
             return 3
-        if gb >= 2:
+        if total_boosts >= 2:
             return 2
-        if gb >= 1:
+        if total_boosts >= 1:
+            return 1
+        return 0
+
+    def _get_boost_tier_from_count(self, count: int) -> int:
+        """Return the tier based on a raw boost count."""
+        if count >= 3:
+            return 3
+        if count >= 2:
+            return 2
+        if count >= 1:
             return 1
         return 0
 
@@ -69,7 +133,6 @@ class BoostPerksCog(commands.Cog):
         is_boosting = member.premium_since is not None
 
         if not is_boosting:
-            # Remove all booster roles
             to_remove = [
                 guild.get_role(rid) for rid in ALL_BOOSTER_ROLES
                 if rid in current_ids and guild.get_role(rid)
@@ -94,7 +157,6 @@ class BoostPerksCog(commands.Cog):
                 if r:
                     to_add.append(r)
 
-        # Remove roles the user shouldn't have at this tier
         to_remove = []
         for rid in ALL_BOOSTER_ROLES:
             if rid not in target_ids and rid in current_ids:
@@ -104,7 +166,7 @@ class BoostPerksCog(commands.Cog):
 
         if to_add:
             try:
-                await member.add_roles(*to_add, reason=f"Booster tier {tier}")
+                await member.add_roles(*to_add, reason=f"Booster tier {tier} ({_get_user_boost_count(member.id)} lifetime boosts)")
             except Exception:
                 pass
         if to_remove:
@@ -116,12 +178,14 @@ class BoostPerksCog(commands.Cog):
     # ── DM helpers ───────────────────────────────────────────────────────
 
     async def _dm_boost_started(self, member: discord.Member, tier: int) -> None:
+        total = _get_user_boost_count(member.id)
         embed = discord.Embed(
             title="🎉 Thank You for Boosting!",
             description=(
                 f"Thank you for boosting **{member.guild.name}**!\n"
-                f"You've unlocked **Tier {tier}** booster perks and your roles "
-                f"have been assigned automatically."
+                f"You've unlocked **Tier {tier}** booster perks "
+                f"({total} total boost{'s' if total != 1 else ''} given).\n"
+                f"Your roles have been assigned automatically."
             ),
             color=discord.Color.from_str("#ff73fa"),
         )
@@ -163,6 +227,12 @@ class BoostPerksCog(commands.Cog):
         if before.premium_since == after.premium_since:
             return
 
+        # Track individual boost count
+        if after.premium_since is not None and before.premium_since is None:
+            new_count = _increment_boost(after.id)
+        elif after.premium_since is None and before.premium_since is not None:
+            _decrement_boost(after.id)
+
         await self._sync_booster_roles(after)
 
         if after.premium_since is not None:
@@ -186,6 +256,7 @@ class BoostPerksCog(commands.Cog):
         target = member or ctx.author
 
         is_boosting = target.premium_since is not None
+        total_boosts = _get_user_boost_count(target.id)
         tier = self._get_boost_tier(target) if is_boosting else 0
 
         embed = discord.Embed(
@@ -194,8 +265,8 @@ class BoostPerksCog(commands.Cog):
             color=discord.Color.blurple(),
         )
         embed.add_field(name="Currently Boosting", value="✅ Yes" if is_boosting else "❌ No", inline=True)
+        embed.add_field(name="Lifetime Boosts", value=str(total_boosts), inline=True)
         embed.add_field(name="Boost Tier", value=str(tier) if is_boosting else "N/A", inline=True)
-        embed.add_field(name="Guild Boost Count", value=str(ctx.guild.premium_subscription_count or 0), inline=True)
 
         current_role_list = []
         target_ids = {r.id for r in target.roles}
@@ -224,6 +295,69 @@ class BoostPerksCog(commands.Cog):
     async def boost_test_error(self, ctx: commands.Context, error: Exception) -> None:
         if isinstance(error, commands.MissingPermissions):
             await ctx.send("❌ You need administrator permissions to use this command.")
+        else:
+            await ctx.send(f"❌ An error occurred: {error}")
+
+    @commands.command(name="boostcount")
+    @commands.has_guild_permissions(administrator=True)
+    async def boost_count(self, ctx: commands.Context, member: discord.Member) -> None:
+        """Check the total lifetime boosts a user has given. (admins only)
+        Usage: !boostcount @user"""
+        total = _get_user_boost_count(member.id)
+        is_boosting = member.premium_since is not None
+        tier = self._get_boost_tier_from_count(total) if is_boosting else 0
+
+        embed = discord.Embed(
+            title="Boost Count",
+            description=f"Boost history for {member.mention}",
+            color=discord.Color.blurple(),
+        )
+        embed.add_field(name="Lifetime Boosts Given", value=str(total), inline=True)
+        embed.add_field(name="Currently Boosting", value="✅ Yes" if is_boosting else "❌ No", inline=True)
+        embed.add_field(name="Current Tier", value=str(tier) if is_boosting else "Not boosting", inline=True)
+
+        await ctx.send(embed=embed)
+
+    @boost_count.error
+    async def boost_count_error(self, ctx: commands.Context, error: Exception) -> None:
+        if isinstance(error, commands.MissingPermissions):
+            await ctx.send("❌ You need administrator permissions to use this command.")
+        elif isinstance(error, commands.BadArgument):
+            await ctx.send("❌ Usage: `!boostcount @user` — please mention a valid member.")
+        else:
+            await ctx.send(f"❌ An error occurred: {error}")
+
+    @commands.command(name="boostset")
+    @commands.has_guild_permissions(administrator=True)
+    async def boost_set(self, ctx: commands.Context, member: discord.Member, count: int) -> None:
+        """Manually set a user's lifetime boost count. (admins only)
+        Usage: !boostset @user <count>"""
+        if count < 0:
+            await ctx.send("❌ Count cannot be negative.")
+            return
+
+        counts = _load_boost_counts()
+        counts[str(member.id)] = count
+        _save_boost_counts(counts)
+
+        # Re-sync roles
+        await self._sync_booster_roles(member)
+
+        tier = self._get_boost_tier_from_count(count) if member.premium_since else 0
+        embed = discord.Embed(
+            title="✅ Boost Count Updated",
+            description=f"Set {member.mention}'s lifetime boost count to **{count}**",
+            color=discord.Color.green(),
+        )
+        embed.add_field(name="Current Tier", value=str(tier) if member.premium_since and tier else "Not boosting", inline=True)
+        await ctx.send(embed=embed)
+
+    @boost_set.error
+    async def boost_set_error(self, ctx: commands.Context, error: Exception) -> None:
+        if isinstance(error, commands.MissingPermissions):
+            await ctx.send("❌ You need administrator permissions to use this command.")
+        elif isinstance(error, commands.BadArgument):
+            await ctx.send("❌ Usage: `!boostset @user <count>` — provide a valid member and number.")
         else:
             await ctx.send(f"❌ An error occurred: {error}")
 
@@ -263,7 +397,6 @@ class BoostPerksCog(commands.Cog):
                     f"{len(non_boosting_with_roles)} with stale roles..."
         )
 
-        # Process current boosters
         for member in boosting_members:
             try:
                 tier = self._get_boost_tier(member)
@@ -280,7 +413,6 @@ class BoostPerksCog(commands.Cog):
                 )
             await asyncio.sleep(0.25)
 
-        # Clean up non-boosters with stale roles
         for member in non_boosting_with_roles:
             try:
                 await self._sync_booster_roles(member)
