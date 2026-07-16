@@ -373,7 +373,36 @@ class BoostPerksCog(commands.Cog):
             await status.edit(content="✅ No updates needed.")
             return
 
-        summary = [f"**{len(boosting_members)}** boosters will be processed.", f"**{len(non_boosting_with_roles)}** non-boosters with stale roles."]
+        # Build per-user breakdown for boosting members
+        boosting_lines = []
+        for m in boosting_members:
+            count = _get_user_boost_count(m.id)
+            tier = self._get_boost_tier(m)
+            boosting_lines.append(f"• {m.mention} — {count} boost{'s' if count != 1 else ''}, Tier {tier}")
+
+        # Build per-user breakdown for non-boosters with roles
+        stale_lines = []
+        for m in non_boosting_with_roles:
+            roles_to_remove = []
+            for rid in ALL_BOOSTER_ROLES:
+                if rid in {r.id for r in m.roles} and _bot_gave_role(m.id, rid):
+                    r = ctx.guild.get_role(rid)
+                    if r:
+                        roles_to_remove.append(r.name)
+            if roles_to_remove:
+                stale_lines.append(f"• {m.mention} — will lose: {', '.join(roles_to_remove)}")
+            else:
+                stale_lines.append(f"• {m.mention} — no bot-assigned roles")
+
+        summary = [
+            f"**{len(boosting_members)}** boosting members (showing {min(15, len(boosting_lines))}):",
+            *boosting_lines[:15],
+            "",
+            f"**{len(non_boosting_with_roles)}** non-boosters with bot-assigned roles:",
+            *stale_lines[:15],
+            "",
+            "⚠️ Only bot-assigned roles will be removed.",
+        ]
         token = os.urandom(4).hex().upper()[:4]
         confirm = discord.Embed(
             title="⚠️ Confirm Boost Refresh",
