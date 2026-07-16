@@ -53,7 +53,7 @@ def _save_secs(data: dict[str, str]):
 
 _CS_RE     = re.compile(r"(?:GU|\U0001D4A2\U0001D4B0)-(\d{3})")
 _LOA_RE    = re.compile(r"(?i)^loa\s*\|\s*")
-_CS_SEG_RE = re.compile(r"^(?:GU|\U0001D4A2\U0001D4B0)-\d{3}\s*\|\s*")
+_CS_SEG_RE = re.compile(r"^(?:GU|\U0001D4A2\U0001D4B0)-\d{3}(?:\s*\|\s*|\s+|$)")
 
 def _parse_num(cs: str) -> Optional[int]:
     m = _CS_RE.fullmatch(cs.strip())
