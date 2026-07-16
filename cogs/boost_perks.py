@@ -59,37 +59,21 @@ def _save_boost_counts(data: dict[str, int]) -> None:
 
 
 def _increment_boost(user_id: int) -> int:
-    """Increment a user's lifetime boost count and return the new count."""
+    """Increment a user's boost count and return the new count."""
     counts = _load_boost_counts()
     key = str(user_id)
-    current = counts.get(key, 0)
-    counts[key] = current + 1
-    _save_boost_counts(counts)
-    return counts[key]
-
-
-def _decrement_boost(user_id: int) -> int:
-    """Decrement a user's lifetime boost count and return the new count."""
-    counts = _load_boost_counts()
-    key = str(user_id)
-    current = counts.get(key, 0)
-    if current > 0:
-        counts[key] = current - 1
-    else:
-        counts[key] = 0
+    counts[key] = counts.get(key, 1) + 1
     _save_boost_counts(counts)
     return counts[key]
 
 
 def _get_user_boost_count(user_id: int) -> int:
-    """Get the total lifetime boost count for a user."""
+    """Get the boost count for a user (defaults to 1 if currently boosting and no record)."""
     counts = _load_boost_counts()
-    return counts.get(str(user_id), 0)
+    return counts.get(str(user_id), 1)
 
 
 def _load_bot_given_roles() -> dict[str, list[int]]:
-    """Load which users the bot has given which roles.
-    Format: {user_id_str: [role_id, ...]}"""
     if not os.path.exists(BOT_GIVEN_ROLES_FILE):
         return {}
     try:
@@ -103,20 +87,17 @@ def _load_bot_given_roles() -> dict[str, list[int]]:
 
 
 def _save_bot_given_roles(data: dict[str, list[int]]) -> None:
-    """Save bot-given role tracking to disk."""
     os.makedirs(os.path.dirname(BOT_GIVEN_ROLES_FILE), exist_ok=True)
     with open(BOT_GIVEN_ROLES_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
 
 
 def _bot_gave_role(user_id: int, role_id: int) -> bool:
-    """Check if the bot has recorded giving this role to this user."""
     records = _load_bot_given_roles()
     return role_id in records.get(str(user_id), [])
 
 
 def _record_bot_gave_role(user_id: int, role_id: int) -> None:
-    """Record that the bot gave a role to a user."""
     records = _load_bot_given_roles()
     key = str(user_id)
     if key not in records:
@@ -127,7 +108,6 @@ def _record_bot_gave_role(user_id: int, role_id: int) -> None:
 
 
 def _record_bot_removed_role(user_id: int, role_id: int) -> None:
-    """Remove tracking that the bot gave a role (after bot removes it)."""
     records = _load_bot_given_roles()
     key = str(user_id)
     if key in records and role_id in records[key]:
@@ -141,11 +121,7 @@ class BoostPerksCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    # ── Tier helpers ─────────────────────────────────────────────────────
-
     def _get_boost_tier(self, member: discord.Member) -> int:
-        """Return the highest boost tier (0-3) the member qualifies for
-        based on their total lifetime boost count."""
         if not member.premium_since:
             return 0
         total_boosts = _get_user_boost_count(member.id)
@@ -153,33 +129,15 @@ class BoostPerksCog(commands.Cog):
             return 3
         if total_boosts >= 2:
             return 2
-        if total_boosts >= 1:
-            return 1
-        return 0
-
-    def _get_boost_tier_from_count(self, count: int) -> int:
-        """Return the tier based on a raw boost count."""
-        if count >= 3:
-            return 3
-        if count >= 2:
-            return 2
-        if count >= 1:
-            return 1
-        return 0
+        return 1
 
     def _tier_roles(self, tier: int) -> list[int]:
-        """Return role IDs for a given tier (1-3)."""
         for min_b, rids in BOOST_TIERS:
             if tier >= min_b:
                 return list(rids)
         return []
 
-    # ── Role assignment ──────────────────────────────────────────────────
-
     async def _sync_booster_roles(self, member: discord.Member) -> None:
-        """Remove or assign booster roles based on current boost status.
-        ROLE_3_BOOST (office key) is NEVER removed by the bot unless the bot itself gave it.
-        Roles given manually by admins are preserved."""
         guild = member.guild
         if not guild:
             return
@@ -188,7 +146,6 @@ class BoostPerksCog(commands.Cog):
         is_boosting = member.premium_since is not None
 
         if not is_boosting:
-            # Only remove roles that the bot tracked as having given
             to_remove = []
             for rid in ALL_BOOSTER_ROLES:
                 if rid in current_ids and _bot_gave_role(member.id, rid):
@@ -196,7 +153,6 @@ class BoostPerksCog(commands.Cog):
                     if r:
                         to_remove.append(r)
 
-            # Also remove roles the bot didn't give, EXCEPT ROLE_3_BOOST which is exclusive
             for rid in (ALL_BOOSTER_ROLES - {ROLE_3_BOOST}):
                 if rid in current_ids and not _bot_gave_role(member.id, rid):
                     r = guild.get_role(rid)
@@ -205,45 +161,33 @@ class BoostPerksCog(commands.Cog):
 
             if to_remove:
                 try:
-                    await member.remove_roles(
-                        *to_remove,
-                        reason="Stopped boosting — removed booster roles"
-                    )
+                    await member.remove_roles(*to_remove, reason="Stopped boosting")
                     for r in to_remove:
                         _record_bot_removed_role(member.id, r.id)
                 except Exception:
                     pass
 
-            # If they stopped boosting, clear the bot's tracking for the exclusive role
-            # so it could be reassigned later if they boost again
             if _bot_gave_role(member.id, ROLE_3_BOOST):
                 _record_bot_removed_role(member.id, ROLE_3_BOOST)
             return
 
+        # Currently boosting
         tier = self._get_boost_tier(member)
         target_ids = set(self._tier_roles(tier))
 
-        to_add = []
-        for rid in target_ids:
-            if rid not in current_ids:
-                r = guild.get_role(rid)
-                if r:
-                    to_add.append(r)
+        to_add = [guild.get_role(rid) for rid in target_ids if rid not in current_ids]
+        to_add = [r for r in to_add if r]
 
         to_remove = []
         for rid in ALL_BOOSTER_ROLES:
-            if rid not in target_ids and rid in current_ids:
-                # Never remove ROLE_3_BOOST unless the bot itself gave it
-                if rid == ROLE_3_BOOST and not _bot_gave_role(member.id, rid):
-                    continue
+            if rid not in target_ids and rid in current_ids and _bot_gave_role(member.id, rid):
                 r = guild.get_role(rid)
                 if r:
                     to_remove.append(r)
 
         if to_add:
             try:
-                await member.add_roles(*to_add, reason=f"Booster tier {tier} ({_get_user_boost_count(member.id)} lifetime boosts)")
-                # Track that the bot gave these roles
+                await member.add_roles(*to_add, reason=f"Booster tier {tier}")
                 for r in to_add:
                     _record_bot_gave_role(member.id, r.id)
             except Exception:
@@ -255,8 +199,6 @@ class BoostPerksCog(commands.Cog):
                     _record_bot_removed_role(member.id, r.id)
             except Exception:
                 pass
-
-    # ── DM helpers ───────────────────────────────────────────────────────
 
     async def _dm_boost_started(self, member: discord.Member, tier: int) -> None:
         total = _get_user_boost_count(member.id)
@@ -301,14 +243,11 @@ class BoostPerksCog(commands.Cog):
         except Exception:
             pass
 
-    # ── Listeners ────────────────────────────────────────────────────────
-
     @commands.Cog.listener()
     async def on_member_update(self, before: discord.Member, after: discord.Member) -> None:
         if before.premium_since == after.premium_since:
             return
 
-        # Track lifetime boost count (only increment - never decrement)
         if after.premium_since is not None and before.premium_since is None:
             _increment_boost(after.id)
 
@@ -325,15 +264,10 @@ class BoostPerksCog(commands.Cog):
         if member.premium_since is not None:
             await self._sync_booster_roles(member)
 
-    # ── Admin commands ──────────────────────────────────────────────────
-
     @commands.command(name="boosttest")
     @commands.has_guild_permissions(administrator=True)
     async def boost_test(self, ctx: commands.Context, member: discord.Member = None) -> None:
-        """Test boost perk role assignment. (admins only)
-        Usage: !boosttest [@user]"""
         target = member or ctx.author
-
         is_boosting = target.premium_since is not None
         total_boosts = _get_user_boost_count(target.id)
         tier = self._get_boost_tier(target) if is_boosting else 0
@@ -347,235 +281,135 @@ class BoostPerksCog(commands.Cog):
         embed.add_field(name="Lifetime Boosts", value=str(total_boosts), inline=True)
         embed.add_field(name="Boost Tier", value=str(tier) if is_boosting else "N/A", inline=True)
 
-        current_role_list = []
-        target_ids = {r.id for r in target.roles}
+        role_list = []
         for rid in ALL_BOOSTER_ROLES:
             r = ctx.guild.get_role(rid)
             if r:
-                has = "✅" if rid in target_ids else "❌"
-                current_role_list.append(f"{has} {r.mention}")
-        embed.add_field(
-            name="Current Booster Roles",
-            value="\n".join(current_role_list) if current_role_list else "None",
-            inline=False,
-        )
-
-        if is_boosting:
-            tier_roles = self._tier_roles(tier)
-            embed.add_field(
-                name="Roles That Would Be Assigned",
-                value="\n".join(f"• <@&{rid}>" for rid in tier_roles) or "None",
-                inline=False,
-            )
-
+                has = "✅" if rid in {role.id for role in target.roles} else "❌"
+                role_list.append(f"{has} {r.mention}")
+        embed.add_field(name="Current Booster Roles", value="\n".join(role_list) or "None", inline=False)
         await ctx.send(embed=embed)
 
     @boost_test.error
     async def boost_test_error(self, ctx: commands.Context, error: Exception) -> None:
         if isinstance(error, commands.MissingPermissions):
-            await ctx.send("❌ You need administrator permissions to use this command.")
+            await ctx.send("❌ Admin only.")
         else:
-            await ctx.send(f"❌ An error occurred: {error}")
+            await ctx.send(f"❌ Error: {error}")
 
     @commands.command(name="boostcount")
     @commands.has_guild_permissions(administrator=True)
     async def boost_count(self, ctx: commands.Context, member: discord.Member) -> None:
-        """Check the total lifetime boosts a user has given. (admins only)
-        Usage: !boostcount @user"""
         total = _get_user_boost_count(member.id)
         is_boosting = member.premium_since is not None
-        tier = self._get_boost_tier_from_count(total) if is_boosting else 0
+        tier = self._get_boost_tier(member) if is_boosting else 0
 
         embed = discord.Embed(
             title="Boost Count",
             description=f"Boost history for {member.mention}",
             color=discord.Color.blurple(),
         )
-        embed.add_field(name="Lifetime Boosts Given", value=str(total), inline=True)
+        embed.add_field(name="Lifetime Boosts", value=str(total), inline=True)
         embed.add_field(name="Currently Boosting", value="✅ Yes" if is_boosting else "❌ No", inline=True)
         embed.add_field(name="Current Tier", value=str(tier) if is_boosting else "Not boosting", inline=True)
-
         await ctx.send(embed=embed)
 
     @boost_count.error
     async def boost_count_error(self, ctx: commands.Context, error: Exception) -> None:
         if isinstance(error, commands.MissingPermissions):
-            await ctx.send("❌ You need administrator permissions to use this command.")
-        elif isinstance(error, commands.BadArgument):
-            await ctx.send("❌ Usage: `!boostcount @user` — please mention a valid member.")
+            await ctx.send("❌ Admin only.")
         else:
-            await ctx.send(f"❌ An error occurred: {error}")
+            await ctx.send(f"❌ Error: {error}")
 
     @commands.command(name="boostset")
     @commands.has_guild_permissions(administrator=True)
     async def boost_set(self, ctx: commands.Context, member: discord.Member, count: int) -> None:
-        """Manually set a user's lifetime boost count. (admins only)
-        Usage: !boostset @user <count>"""
-        if count < 0:
-            await ctx.send("❌ Count cannot be negative.")
+        if count < 1:
+            await ctx.send("❌ Count must be at least 1 for boosters, or remove with boostset 0.")
             return
 
         counts = _load_boost_counts()
         counts[str(member.id)] = count
         _save_boost_counts(counts)
-
-        # Re-sync roles
         await self._sync_booster_roles(member)
 
-        tier = self._get_boost_tier_from_count(count) if member.premium_since else 0
+        tier = self._get_boost_tier(member) if member.premium_since else 0
         embed = discord.Embed(
             title="✅ Boost Count Updated",
-            description=f"Set {member.mention}'s lifetime boost count to **{count}**",
+            description=f"Set {member.mention}'s boost count to **{count}**",
             color=discord.Color.green(),
         )
-        embed.add_field(name="Current Tier", value=str(tier) if member.premium_since and tier else "Not boosting", inline=True)
         await ctx.send(embed=embed)
 
     @boost_set.error
     async def boost_set_error(self, ctx: commands.Context, error: Exception) -> None:
         if isinstance(error, commands.MissingPermissions):
-            await ctx.send("❌ You need administrator permissions to use this command.")
-        elif isinstance(error, commands.BadArgument):
-            await ctx.send("❌ Usage: `!boostset @user <count>` — provide a valid member and number.")
+            await ctx.send("❌ Admin only.")
         else:
-            await ctx.send(f"❌ An error occurred: {error}")
-
-    def _infer_tier_from_roles(self, member: discord.Member) -> int:
-        """Infer a booster's tier from their existing booster roles.
-        Returns 0-3. Used when a user is actively boosting but has no stored boost count."""
-        current_ids = {r.id for r in member.roles}
-        for tier, rids in [(3, [ROLE_3_BOOST]), (2, [ROLE_2_BOOST]), (1, [ROLE_1_BOOST_A, ROLE_1_BOOST_B])]:
-            if any(rid in current_ids for rid in rids):
-                return tier
-        return 1  # Actively boosting but no booster roles = minimum tier 1
+            await ctx.send(f"❌ Error: {error}")
 
     @commands.command(name="boostrefresh")
     @commands.has_guild_permissions(administrator=True)
     async def boost_refresh(self, ctx: commands.Context) -> None:
-        """Scan all members, sync booster roles, and re-send DM notifications. (admins only)
-        Usage: !boostrefresh"""
         guild = ctx.guild
         if not guild:
             return
 
-        # Gather members
-        status = await ctx.send("🔄 Scanning all members for boost status...")
-
+        status = await ctx.send("🔄 Scanning...")
         boosting_members = []
         non_boosting_with_roles = []
 
         for member in guild.members:
             if member.bot:
                 continue
-            has_booster_role = any(rid in {r.id for r in member.roles} for rid in ALL_BOOSTER_ROLES)
+            has_role = any(rid in {r.id for r in member.roles} for rid in ALL_BOOSTER_ROLES)
             if member.premium_since is not None:
                 boosting_members.append(member)
-            elif has_booster_role:
+            elif has_role:
                 non_boosting_with_roles.append(member)
 
         total = len(boosting_members) + len(non_boosting_with_roles)
         if total == 0:
-            await status.edit(content="✅ No members need booster role updates.")
+            await status.edit(content="✅ No updates needed.")
             return
 
-        # Ensure every boosting member has at least 1 stored boost count
-        for member in boosting_members:
-            count = _get_user_boost_count(member.id)
-            if count < 1:
-                # Infer from existing roles
-                inferred = self._infer_tier_from_roles(member)
-                counts = _load_boost_counts()
-                counts[str(member.id)] = inferred
-                _save_boost_counts(counts)
-
-        # Compute per-user breakdowns for approval
-        booster_details = []
-        for member in boosting_members:
-            count = _get_user_boost_count(member.id)
-            tier = self._get_boost_tier(member)
-            if count < 1:
-                count = self._infer_tier_from_roles(member)
-                tier = count
-            booster_details.append((member, count, tier))
-
-        stale_details = []
-        for member in non_boosting_with_roles:
-            roles_to_remove = []
-            for rid in ALL_BOOSTER_ROLES:
-                if rid in {r.id for r in member.roles} and _bot_gave_role(member.id, rid):
-                    r = ctx.guild.get_role(rid)
-                    if r:
-                        roles_to_remove.append(r.name)
-            stale_details.append((member.mention, roles_to_remove))
-
-        # Build summary
-        summary_lines = [
-            f"**{len(boosting_members)}** actively boosting members will be processed:",
-        ]
-
-        # Show boosting members breakdown (up to 15 to avoid huge messages)
-        for member, count, tier in booster_details[:15]:
-            summary_lines.append(f"  • {member.mention} — {count} boost{'s' if count != 1 else ''}, Tier {tier}")
-        if len(booster_details) > 15:
-            summary_lines.append(f"  ... and {len(booster_details) - 15} more boosters")
-
-        summary_lines.append("")
-        summary_lines.append(f"**{len(non_boosting_with_roles)}** non-boosters with bot-assigned roles to clean:")
-        for mention, roles in stale_details[:15]:
-            if roles:
-                summary_lines.append(f"  • {mention} — will lose: {', '.join(roles)}")
-            else:
-                summary_lines.append(f"  • {mention} — no bot-assigned roles (nothing to remove)")
-        if len(stale_details) > 15:
-            summary_lines.append(f"  ... and {len(stale_details) - 15} more non-boosters")
-
-        summary_lines.append("")
-        summary_lines.append("⚠️ Only roles the bot gave will be removed from non-boosters.")
-
-        import uuid
-        token = uuid.uuid4().hex[:8].upper()
-        confirm_embed = discord.Embed(
+        summary = [f"**{len(boosting_members)}** boosters will be processed.", f"**{len(non_boosting_with_roles)}** non-boosters with stale roles."]
+        token = os.urandom(4).hex().upper()[:4]
+        confirm = discord.Embed(
             title="⚠️ Confirm Boost Refresh",
-            description="\n".join(summary_lines) + f"\n\nTo confirm, type the following token in this channel:\n```{token}```",
-            color=discord.Color.gold()
+            description="\n".join(summary) + f"\n\nType to confirm:\n```{token}```",
+            color=discord.Color.gold(),
         )
-        await status.edit(content=None, embed=confirm_embed)
+        await status.edit(content=None, embed=confirm)
 
-        def check(m: discord.Message):
+        def check(m):
             return m.author.id == ctx.author.id and m.channel.id == ctx.channel.id
 
         try:
             msg = await self.bot.wait_for("message", check=check, timeout=60)
         except Exception:
-            await ctx.send("⏰ Timed out. No changes were made.")
+            await ctx.send("⏰ Timed out.")
             return
 
         if msg.content.strip() != token:
-            await ctx.send("❌ Token mismatch. No changes were made.")
+            await ctx.send("❌ Cancelled.")
             return
 
-        # Execute
-        status = await ctx.send("🔄 Executing boost refresh...")
-        processed = 0
-        synced = 0
-        dmed = 0
-        cleaned = 0
-        failed = 0
+        status = await ctx.send("🔄 Processing...")
+        processed = synced = dmed = cleaned = failed = 0
 
         for member in boosting_members:
             try:
-                tier = self._get_boost_tier(member)
                 await self._sync_booster_roles(member)
                 synced += 1
+                tier = self._get_boost_tier(member)
                 await self._dm_boost_started(member, tier)
                 dmed += 1
             except Exception:
                 failed += 1
             processed += 1
             if processed % 10 == 0:
-                await status.edit(
-                    content=f"🔄 **{processed}/{total}** — {synced} synced, {dmed} DMed, {cleaned} cleaned, {failed} failed"
-                )
+                await status.edit(content=f"🔄 {processed}/{total}...")
             await asyncio.sleep(0.25)
 
         for member in non_boosting_with_roles:
@@ -586,28 +420,21 @@ class BoostPerksCog(commands.Cog):
                 failed += 1
             processed += 1
             if processed % 10 == 0:
-                await status.edit(
-                    content=f"🔄 **{processed}/{total}** — {synced} synced, {dmed} DMed, {cleaned} cleaned, {failed} failed"
-                )
+                await status.edit(content=f"🔄 {processed}/{total}...")
             await asyncio.sleep(0.25)
 
-        result = discord.Embed(
-            title="✅ Boost Refresh Complete",
-            color=discord.Color.green()
-        )
-        result.add_field(name="Roles Synced", value=str(synced), inline=True)
-        result.add_field(name="DMs Sent", value=str(dmed), inline=True)
-        result.add_field(name="Stale Roles Cleaned", value=str(cleaned), inline=True)
-        result.add_field(name="Failed", value=str(failed), inline=True)
-        result.add_field(name="Total Processed", value=str(processed), inline=True)
+        result = discord.Embed(title="✅ Complete", color=discord.Color.green())
+        result.add_field(name="Synced", value=str(synced), inline=True)
+        result.add_field(name="DMs", value=str(dmed), inline=True)
+        result.add_field(name="Cleaned", value=str(cleaned), inline=True)
         await status.edit(content=None, embed=result)
 
     @boost_refresh.error
     async def boost_refresh_error(self, ctx: commands.Context, error: Exception) -> None:
         if isinstance(error, commands.MissingPermissions):
-            await ctx.send("❌ You need administrator permissions to use this command.")
+            await ctx.send("❌ Admin only.")
         else:
-            await ctx.send(f"❌ An error occurred: {error}")
+            await ctx.send(f"❌ Error: {error}")
 
 
 async def setup(bot: commands.Bot) -> None:
