@@ -1,4 +1,5 @@
 
+import asyncio
 import discord
 from discord.ext import commands
 
@@ -175,7 +176,7 @@ class BoostPerksCog(commands.Cog):
         if member.premium_since is not None:
             await self._sync_booster_roles(member)
 
-    # ── Admin test command ───────────────────────────────────────────────
+    # ── Admin commands ──────────────────────────────────────────────────
 
     @commands.command(name="boosttest")
     @commands.has_guild_permissions(administrator=True)
@@ -221,6 +222,91 @@ class BoostPerksCog(commands.Cog):
 
     @boost_test.error
     async def boost_test_error(self, ctx: commands.Context, error: Exception) -> None:
+        if isinstance(error, commands.MissingPermissions):
+            await ctx.send("❌ You need administrator permissions to use this command.")
+        else:
+            await ctx.send(f"❌ An error occurred: {error}")
+
+    @commands.command(name="boostrefresh")
+    @commands.has_guild_permissions(administrator=True)
+    async def boost_refresh(self, ctx: commands.Context) -> None:
+        """Scan all members, sync booster roles, and re-send DM notifications. (admins only)
+        Usage: !boostrefresh"""
+        guild = ctx.guild
+        if not guild:
+            return
+
+        status = await ctx.send("🔄 Scanning all members for boost status...")
+
+        boosting_members = []
+        non_boosting_with_roles = []
+
+        for member in guild.members:
+            if member.bot:
+                continue
+            has_booster_role = any(rid in {r.id for r in member.roles} for rid in ALL_BOOSTER_ROLES)
+            if member.premium_since is not None:
+                boosting_members.append(member)
+            elif has_booster_role:
+                non_boosting_with_roles.append(member)
+
+        total = len(boosting_members) + len(non_boosting_with_roles)
+        processed = 0
+        synced = 0
+        dmed = 0
+        cleaned = 0
+        failed = 0
+
+        await status.edit(
+            content=f"🔄 Processing **{total}** member(s) — "
+                    f"{len(boosting_members)} boosting, "
+                    f"{len(non_boosting_with_roles)} with stale roles..."
+        )
+
+        # Process current boosters
+        for member in boosting_members:
+            try:
+                tier = self._get_boost_tier(member)
+                await self._sync_booster_roles(member)
+                synced += 1
+                await self._dm_boost_started(member, tier)
+                dmed += 1
+            except Exception:
+                failed += 1
+            processed += 1
+            if processed % 10 == 0:
+                await status.edit(
+                    content=f"🔄 **{processed}/{total}** — {synced} synced, {dmed} DMed, {cleaned} cleaned, {failed} failed"
+                )
+            await asyncio.sleep(0.25)
+
+        # Clean up non-boosters with stale roles
+        for member in non_boosting_with_roles:
+            try:
+                await self._sync_booster_roles(member)
+                cleaned += 1
+            except Exception:
+                failed += 1
+            processed += 1
+            if processed % 10 == 0:
+                await status.edit(
+                    content=f"🔄 **{processed}/{total}** — {synced} synced, {dmed} DMed, {cleaned} cleaned, {failed} failed"
+                )
+            await asyncio.sleep(0.25)
+
+        result = discord.Embed(
+            title="✅ Boost Refresh Complete",
+            color=discord.Color.green()
+        )
+        result.add_field(name="Roles Synced", value=str(synced), inline=True)
+        result.add_field(name="DMs Sent", value=str(dmed), inline=True)
+        result.add_field(name="Stale Roles Cleaned", value=str(cleaned), inline=True)
+        result.add_field(name="Failed", value=str(failed), inline=True)
+        result.add_field(name="Total Processed", value=str(processed), inline=True)
+        await status.edit(content=None, embed=result)
+
+    @boost_refresh.error
+    async def boost_refresh_error(self, ctx: commands.Context, error: Exception) -> None:
         if isinstance(error, commands.MissingPermissions):
             await ctx.send("❌ You need administrator permissions to use this command.")
         else:
