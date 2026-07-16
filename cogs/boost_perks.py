@@ -32,6 +32,9 @@ HICOM_CHANNEL_ID = 1317963319172137103
 BOOST_COUNTS_FILE = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "..", "data", "boost_counts.json"
 )
+BOT_GIVEN_ROLES_FILE = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..", "data", "bot_given_roles.json"
+)
 
 
 def _load_boost_counts() -> dict[str, int]:
@@ -84,6 +87,56 @@ def _get_user_boost_count(user_id: int) -> int:
     return counts.get(str(user_id), 0)
 
 
+def _load_bot_given_roles() -> dict[str, list[int]]:
+    """Load which users the bot has given which roles.
+    Format: {user_id_str: [role_id, ...]}"""
+    if not os.path.exists(BOT_GIVEN_ROLES_FILE):
+        return {}
+    try:
+        with open(BOT_GIVEN_ROLES_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            return {str(k): list(v) for k, v in data.items()}
+    except Exception:
+        pass
+    return {}
+
+
+def _save_bot_given_roles(data: dict[str, list[int]]) -> None:
+    """Save bot-given role tracking to disk."""
+    os.makedirs(os.path.dirname(BOT_GIVEN_ROLES_FILE), exist_ok=True)
+    with open(BOT_GIVEN_ROLES_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+
+
+def _bot_gave_role(user_id: int, role_id: int) -> bool:
+    """Check if the bot has recorded giving this role to this user."""
+    records = _load_bot_given_roles()
+    return role_id in records.get(str(user_id), [])
+
+
+def _record_bot_gave_role(user_id: int, role_id: int) -> None:
+    """Record that the bot gave a role to a user."""
+    records = _load_bot_given_roles()
+    key = str(user_id)
+    if key not in records:
+        records[key] = []
+    if role_id not in records[key]:
+        records[key].append(role_id)
+    _save_bot_given_roles(records)
+
+
+def _record_bot_removed_role(user_id: int, role_id: int) -> None:
+    """Remove tracking that the bot gave a role (after bot removes it)."""
+    records = _load_bot_given_roles()
+    key = str(user_id)
+    if key in records and role_id in records[key]:
+        records[key].remove(role_id)
+        if not records[key]:
+            del records[key]
+        _save_bot_given_roles(records)
+
+
 class BoostPerksCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -124,7 +177,9 @@ class BoostPerksCog(commands.Cog):
     # ── Role assignment ──────────────────────────────────────────────────
 
     async def _sync_booster_roles(self, member: discord.Member) -> None:
-        """Remove or assign booster roles based on current boost status."""
+        """Remove or assign booster roles based on current boost status.
+        ROLE_3_BOOST (office key) is NEVER removed by the bot unless the bot itself gave it.
+        Roles given manually by admins are preserved."""
         guild = member.guild
         if not guild:
             return
@@ -133,18 +188,36 @@ class BoostPerksCog(commands.Cog):
         is_boosting = member.premium_since is not None
 
         if not is_boosting:
-            to_remove = [
-                guild.get_role(rid) for rid in ALL_BOOSTER_ROLES
-                if rid in current_ids and guild.get_role(rid)
-            ]
+            # Only remove roles that the bot tracked as having given
+            to_remove = []
+            for rid in ALL_BOOSTER_ROLES:
+                if rid in current_ids and _bot_gave_role(member.id, rid):
+                    r = guild.get_role(rid)
+                    if r:
+                        to_remove.append(r)
+
+            # Also remove roles the bot didn't give, EXCEPT ROLE_3_BOOST which is exclusive
+            for rid in (ALL_BOOSTER_ROLES - {ROLE_3_BOOST}):
+                if rid in current_ids and not _bot_gave_role(member.id, rid):
+                    r = guild.get_role(rid)
+                    if r:
+                        to_remove.append(r)
+
             if to_remove:
                 try:
                     await member.remove_roles(
                         *to_remove,
                         reason="Stopped boosting — removed booster roles"
                     )
+                    for r in to_remove:
+                        _record_bot_removed_role(member.id, r.id)
                 except Exception:
                     pass
+
+            # If they stopped boosting, clear the bot's tracking for the exclusive role
+            # so it could be reassigned later if they boost again
+            if _bot_gave_role(member.id, ROLE_3_BOOST):
+                _record_bot_removed_role(member.id, ROLE_3_BOOST)
             return
 
         tier = self._get_boost_tier(member)
@@ -160,6 +233,9 @@ class BoostPerksCog(commands.Cog):
         to_remove = []
         for rid in ALL_BOOSTER_ROLES:
             if rid not in target_ids and rid in current_ids:
+                # Never remove ROLE_3_BOOST unless the bot itself gave it
+                if rid == ROLE_3_BOOST and not _bot_gave_role(member.id, rid):
+                    continue
                 r = guild.get_role(rid)
                 if r:
                     to_remove.append(r)
@@ -167,11 +243,16 @@ class BoostPerksCog(commands.Cog):
         if to_add:
             try:
                 await member.add_roles(*to_add, reason=f"Booster tier {tier} ({_get_user_boost_count(member.id)} lifetime boosts)")
+                # Track that the bot gave these roles
+                for r in to_add:
+                    _record_bot_gave_role(member.id, r.id)
             except Exception:
                 pass
         if to_remove:
             try:
                 await member.remove_roles(*to_remove, reason=f"Booster tier {tier} — downgrade")
+                for r in to_remove:
+                    _record_bot_removed_role(member.id, r.id)
             except Exception:
                 pass
 
