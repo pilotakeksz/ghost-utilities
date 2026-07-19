@@ -229,6 +229,10 @@ class WarrantView(discord.ui.View):
 
     async def _close(self, interaction, status):
         try:
+            # Only allow users with SERVER_A_PERSONNEL_ROLE to close warrants
+            if not interaction.guild or SERVER_A_PERSONNEL_ROLE not in [r.id for r in interaction.user.roles]:
+                return await interaction.response.send_message("You do not have permission to use this.", ephemeral=True)
+
             await interaction.response.defer(ephemeral=True)
 
             warrant = await _get_warrant(self.warrant_id)
@@ -327,6 +331,10 @@ class WarrantsCog(commands.Cog):
                             last_location: Optional[str] = None):
 
         try:
+            # Only allow users with SERVER_A_PERSONNEL_ROLE to issue warrants
+            if not interaction.guild or SERVER_A_PERSONNEL_ROLE not in [r.id for r in interaction.user.roles]:
+                return await interaction.response.send_message("You do not have permission to use this command.", ephemeral=True)
+
             cfg = _server_config(interaction.guild.id)
             if not cfg:
                 return await interaction.response.send_message("No permission", ephemeral=True)
