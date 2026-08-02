@@ -55,13 +55,48 @@ def _extract_flow_backup_ids(data: dict) -> list[tuple[str, str, str]]:
     return results
 
 
+def _sanitize_component(comp: Any) -> Any:
+    """Recursively strip fields that are invalid for discord.py's component
+    reconstruction but commonly present in exports from tools like discohook
+    (e.g. link buttons carrying a bogus custom_id, which discord.py's
+    ui.Button forbids alongside url)."""
+    if isinstance(comp, list):
+        return [_sanitize_component(c) for c in comp]
+    if not isinstance(comp, dict):
+        return comp
+
+    comp = dict(comp)  # shallow copy, don't mutate caller's data
+
+    # Button (type 2): link-style (style 5) buttons can't have a custom_id.
+    if comp.get("type") == 2 and comp.get("style") == 5 and comp.get("url"):
+        comp.pop("custom_id", None)
+
+    for key in ("components", "items"):
+        if key in comp and isinstance(comp[key], list):
+            comp[key] = [_sanitize_component(c) for c in comp[key]]
+
+    # Section accessory (thumbnail / button) is a single dict, not a list.
+    if "accessory" in comp and isinstance(comp["accessory"], dict):
+        comp["accessory"] = _sanitize_component(comp["accessory"])
+
+    return comp
+
+
 def _layout_view_from_json(data: dict[str, Any]) -> ui.LayoutView:
+    if not hasattr(ui, "LayoutView"):
+        raise RuntimeError(
+            "Installed discord.py version does not support Components V2 "
+            "(ui.LayoutView missing). Upgrade to discord.py>=2.4 (2.6+ recommended "
+            "for Container/MediaGallery/Section/File support)."
+        )
+
     components = data.get("components")
     if not components:
         raise ValueError("JSON must include a `components` array.")
 
     view = ui.LayoutView(timeout=None)
-    for comp_data in components:
+    for raw_comp_data in components:
+        comp_data = _sanitize_component(raw_comp_data)
         component = _component_factory(comp_data, None)
         if component is None:
             raise ValueError(f"Unsupported component type: {comp_data.get('type')}")
@@ -121,7 +156,7 @@ def _store_view_record(
         try:
             with open(PERSISTENT_VIEWS_FILE, "r", encoding="utf-8") as f:
                 records = json.load(f)
-        except (json.JSONDecodeError, Exception):
+        except Exception:
             records = []
 
     record: dict[str, Any] = {
@@ -148,7 +183,7 @@ def _load_view_records() -> list[dict[str, Any]]:
         if not isinstance(records, list):
             return []
         return records
-    except (json.JSONDecodeError, Exception):
+    except Exception:
         return []
 
 
