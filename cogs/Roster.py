@@ -226,8 +226,29 @@ SECTION_ORDER = [
 ]
 
 
-def build_html(hicom: list, regulars: list) -> str:
+def _read_hicom_section(path: str) -> Optional[str]:
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            html = f.read()
+    except OSError:
+        return None
+
+    match = re.search(
+        r'        <div class="hicom-section">.*?(?=\n        <div class="rank-section|\n      </section>)',
+        html,
+        re.DOTALL,
+    )
+    return match.group(0) if match else None
+
+
+def build_html(hicom: list, regulars: list, preserved_hicom: Optional[str] = None) -> str:
     cards_hicom = "\n".join(_roster_card(t, is_hicom=True) for t in hicom)
+    hicom_section = preserved_hicom or f'''        <div class="hicom-section">
+          <h3 class="rank-title">High Command</h3>
+          <div class="leadership-row">
+{cards_hicom}
+          </div>
+        </div>'''
 
     sections_html = []
     for suffix, title in SECTION_ORDER:
@@ -293,12 +314,7 @@ def build_html(hicom: list, regulars: list) -> str:
         <span class="tag">Active Roster</span>
       </section>
       <section class="section">
-        <div class="hicom-section">
-          <h3 class="rank-title">High Command</h3>
-          <div class="leadership-row">
-{cards_hicom}
-          </div>
-        </div>
+{hicom_section}
 {sections_body}
       </section>
     </main>
@@ -491,9 +507,9 @@ async def generate_roster(guild: discord.Guild, reload_all: bool = False) -> tup
         hicom    = [t for t in troopers if t["_isHicom"]]
         regulars = [t for t in troopers if not t["_isHicom"]]
 
-        html = build_html(hicom, regulars)
-
         out_path = os.path.join(PROJECT_ROOT, "troopers.html")
+        preserved_hicom = _read_hicom_section(out_path)
+        html = build_html(hicom, regulars, preserved_hicom)
         os.makedirs(os.path.dirname(out_path), exist_ok=True)
         with open(out_path, "w", encoding="utf-8") as f:
             f.write(html)
