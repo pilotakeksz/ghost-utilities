@@ -421,9 +421,11 @@ class Store:
 
 class ShiftTypeView(discord.ui.View):
     def __init__(self, cog: "ShiftCog", manage_view: "ShiftManageView"):
-        super().__init__(timeout=900)
+        super().__init__(timeout=20)
         self.cog = cog
         self.manage_view = manage_view
+        self._finished = False
+        self._auto_done_task: Optional[asyncio.Task] = None
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         return await self.manage_view.interaction_check(interaction)
@@ -460,6 +462,17 @@ class ShiftTypeView(discord.ui.View):
             return
 
         cog.store.start_shift(user.id, shift_type)
+        embed = cog.embed_info(
+            "Your shift has started as a **GU** shift by default. Choose a type below, "
+            "or press **Done** to keep GU."
+        )
+        embed.add_field(name="🔵 GU Shift", value="Regular Ghost Unit shift.", inline=False)
+        embed.add_field(name="🔴 SRT Shift", value="Special Response Team shift.", inline=False)
+        embed.add_field(name="🟠 HSPU Shift", value="HSPU shift.", inline=False)
+        embed.set_footer(text="This menu returns to the shift panel automatically after 20 seconds.")
+        await interaction.response.edit_message(embed=embed, view=self)
+        self._auto_done_task = asyncio.create_task(self._auto_done(interaction))
+
         role_on    = guild.get_role(ROLE_SHIFT_ON)
         role_break = guild.get_role(ROLE_BREAK)
         try:
@@ -470,20 +483,13 @@ class ShiftTypeView(discord.ui.View):
         except discord.Forbidden:
             pass
         await cog.log_event(guild, f"🟢 {user.mention} started a **{shift_type}** shift.", actor=user)
-        embed = cog.embed_info(
-            "Your shift has started as a **GU** shift by default. Choose a type below, "
-            "or press **Done** to keep GU."
-        )
-        embed.add_field(name="🔵 GU Shift", value="Regular Ghost Unit shift.", inline=False)
-        embed.add_field(name="🔴 SRT Shift", value="Special Response Team shift.", inline=False)
-        embed.add_field(name="🟠 HSPU Shift", value="HSPU shift.", inline=False)
-        await interaction.response.edit_message(embed=embed, view=self)
         try:
             await cog.update_on_duty_message()
         except Exception:
             pass
 
     async def _select_type(self, interaction: discord.Interaction, shift_type: str) -> None:
+        self._finish_picker()
         user = interaction.user
         guild = interaction.guild
         state = self.cog.store.get_user_state(user.id)
@@ -524,8 +530,28 @@ class ShiftTypeView(discord.ui.View):
 
     @discord.ui.button(label="Done", style=discord.ButtonStyle.secondary)
     async def done_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self._finish_picker()
         embed = await self.cog.build_manage_embed(interaction.user)
         await interaction.response.edit_message(embed=embed, view=self.manage_view)
+
+    def _finish_picker(self) -> None:
+        self._finished = True
+        if self._auto_done_task and not self._auto_done_task.done():
+            self._auto_done_task.cancel()
+
+    async def _auto_done(self, interaction: discord.Interaction) -> None:
+        try:
+            await asyncio.sleep(20)
+            if self._finished:
+                return
+            self._finished = True
+            embed = await self.cog.build_manage_embed(interaction.user)
+            await interaction.edit_original_response(embed=embed, view=self.manage_view)
+            self.stop()
+        except asyncio.CancelledError:
+            raise
+        except (discord.HTTPException, discord.NotFound, discord.Forbidden) as exc:
+            print(f"Unable to automatically close shift type picker: {exc}")
 
 
 class ShiftManageView(discord.ui.View):
