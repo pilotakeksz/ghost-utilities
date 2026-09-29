@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import random
 from typing import Any, Dict, List, Optional
 
 import discord
@@ -11,8 +10,8 @@ from discord.ext import commands
 ATTEMPT_LOG_CHANNEL_ID = 1554566076090683422
 PASSING_SCORE = 4
 QUESTION_COUNT = 5
-PANEL_TITLE = ""
-PANEL_DESCRIPTION = ""
+PANEL_TITLE = "<:guseal:1398999132357525586> // Certification Courses"
+PANEL_DESCRIPTION = "Choose a certification course to begin. You will be presented with a brief explanation, followed by 5 multiple-choice questions."
 PANEL_IMAGE_URL = "https://cdn.discordapp.com/attachments/1398427497724383356/1554603759747993622/Templateeee.png?backend=b2&ex=6abd7d13&is=6abc2b93&hm=736b215c460f0ce60abfb06347de2e03e64ecd0250049b74c486eaea7291cf01&"
 PASS_IMAGE_URL = "https://cdn.discordapp.com/attachments/1398427497724383356/1554608704668831764/Templateeee.png?backend=b2&ex=6abd81ae&is=6abc302e&hm=5e46e0cf45c55085e9d2a1916af6cf3fea6adace3ec7e594795f9ee521ddddcd&"
 FAIL_IMAGE_URL = "https://cdn.discordapp.com/attachments/1398427497724383356/1554608999423541348/Templateeee.png?backend=b2&ex=6abd81f4&is=6abc3074&hm=5a062ddf49ced7286aa2cdbde5262a6dbe8620b0b20c7f0e786a7621ce2d7a1d&"
@@ -58,18 +57,76 @@ CERTIFICATIONS: Dict[str, Dict[str, Any]] = {
         "role_id": 1549411815132368906,
         "explanation_title": "Canine Certification — Introduction",
         "explanation": (
-            "Temporary course introduction: follow department policy and applicable law "
-            "when deploying a canine. Use force only when legally justified, necessary, "
-            "and proportionate; give clear warnings when feasible, maintain control of "
-            "the canine, and stop the use of force when the subject is no longer a threat."
+            "**PURPOSE AND AUTHORITY**\n"
+            "Deploy a canine only for a lawful, clearly defined law-enforcement purpose and in accordance "
+            "with current law, and supervisor direction. A canine deployment or "
+            "bite is a use of force and must be justified by the circumstances.\n\n"
+            "**NECESSITY AND PROPORTIONALITY**\n"
+            "Before deployment, assess the seriousness and immediacy of the threat, the subject's actions, "
+            "the presence of bystanders, and reasonably available options. Use no more force than "
+            "is absolutely necessary for the lawful objective. Do __not__ use a canine to "
+            "punish, intimidate, or retaliate.\n\n"
+            "**WARNINGS AND CONTROL**\n"
+            "At the first safe opportunity, give a clear warning and allow a reasonable opportunity to comply. "
+            "Do not deploy when the anticipated risk is unjustified by the "
+            "immediate circumstances.\n\n"
+            "**STOPPING FORCE AND CARE**\n"
+            "Closely monitor the situation. Once the subject is under control, complies, or no longer "
+            "presents a threat, promptly recall the canine and stop the use of force. When safe and neccessary, arrange "
+            "prompt medical aid (if available) for anyone injured, including the canine."
         ),
-        "explanation_image_url": "",
+        "explanation_image_url": "https://cdn.discordapp.com/attachments/1398427497724383356/1554602862418464880/Templateeee.png?backend=b2&ex=6abd7c3d&is=6abc2abd&hm=c8cd130fd4401079f6b75636c0c6f87d975d0810a9dddc5c01a614a461bb308a&",
         "questions": [
-            {"prompt": "", "choices": ["", "", ""], "correct_index": None, "image_url": ""},
-            {"prompt": "", "choices": ["", "", ""], "correct_index": None, "image_url": ""},
-            {"prompt": "", "choices": ["", "", ""], "correct_index": None, "image_url": ""},
-            {"prompt": "", "choices": ["", "", ""], "correct_index": None, "image_url": ""},
-            {"prompt": "", "choices": ["", "", ""], "correct_index": None, "image_url": ""},
+            {
+                "prompt": "Before deploying a canine, what must the handler establish?",
+                "choices": [
+                    "A lawful purpose where a deployment is justified or neccesitated by the circumstances",
+                    "That deployment is the fastest option, regardless of the threat",
+                    "That the the canine is a dog and not a fish",
+                ],
+                "correct_index": 0,
+                "image_url": "",
+            },
+            {
+                "prompt": "When should a handler give a clear warning before deployment?",
+                "choices": [
+                    "Right after the canine has been released",
+                    "At the first safe opportunity, when feasible, allowing a reasonable chance to comply",
+                    "Never",
+                ],
+                "correct_index": 1,
+                "image_url": "",
+            },
+            {
+                "prompt": "A person is compliant and no longer presents a threat. What should the handler do?",
+                "choices": [
+                    "Continue the deployment as a consequence for earlier actions",
+                    "Wait for another agency to arrive to the scene",
+                    "Promptly recall canine and stop the use of force",
+                ],
+                "correct_index": 2,
+                "image_url": "",
+            },
+            {
+                "prompt": "What is the appropriate role of force during a canine deployment?",
+                "choices": [
+                    "Use only force that is justified, necessary, and proportionate to the lawful objective or threat posed",
+                    "\"When in doubt, just run the suspect over\"",
+                    "Continue using force until the handler is no longer frustrated",
+                ],
+                "correct_index": 0,
+                "image_url": "",
+            },
+            {
+                "prompt": "After a deployment results in an injury, what should the handler do?",
+                "choices": [
+                    "Leave the scene immediately to avoid talking with medical services",
+                    "Arrange appropriate medical aid when safe",
+                    "Run the suspect over with a vehicle to be sure",
+                ],
+                "correct_index": 1,
+                "image_url": "",
+            },
         ],
     },
 }
@@ -120,7 +177,7 @@ class CourseSessionView(discord.ui.View):
         self.answers: List[int] = []
         self.displayed_answers: List[int] = []
         self.choice_orders: List[List[int]] = [
-            random.sample(range(len(question["choices"])), len(question["choices"]))
+            list(range(len(question["choices"])))
             for question in self.course["questions"]
         ]
         self.answer_buttons = [
@@ -231,9 +288,11 @@ class CourseSessionView(discord.ui.View):
         if passed:
             role_note = await self.cog.assign_role(interaction, self.course)
 
-        answer_summary = ", ".join(
-            f"Q{index + 1}:{chr(ord('A') + answer)}"
-            for index, answer in enumerate(self.displayed_answers)
+        answer_summary = "; ".join(
+            f"Q{index}: {question['choices'][answer]}"
+            for index, (answer, question) in enumerate(
+                zip(self.answers, self.course["questions"]), start=1
+            )
         )
         outcome = "PASSED" if passed else "FAILED"
         await self.cog.log_attempt(
@@ -253,6 +312,40 @@ class CourseSessionView(discord.ui.View):
             ),
             color=discord.Color.green() if passed else discord.Color.red(),
         )
+        missed_questions = [
+            (index, question, selected)
+            for index, (answer, selected, question) in enumerate(
+                zip(self.answers, self.displayed_answers, self.course["questions"]),
+                start=1,
+            )
+            if answer != question.get("correct_index")
+        ]
+        if missed_questions:
+            result.add_field(
+                name="Questions to Review",
+                value="The questions you missed are listed below with the correct answers.",
+                inline=False,
+            )
+            for index, question, selected in missed_questions:
+                choices = question["choices"]
+                selected_text = (
+                    choices[self.choice_orders[index - 1][selected]]
+                    if selected < len(self.choice_orders[index - 1])
+                    else "Unknown"
+                )
+                correct_index = question.get("correct_index")
+                if isinstance(correct_index, int) and 0 <= correct_index < len(choices):
+                    correct_letter = chr(
+                        ord("A") + self.choice_orders[index - 1].index(correct_index)
+                    )
+                    correct_text = f"**{correct_letter}.** {choices[correct_index]}"
+                else:
+                    correct_text = "The answer key has not been configured for this question."
+                result.add_field(
+                    name=f"Question {index}: {_display(question['prompt'])[:200]}",
+                    value=f"Your answer: {selected_text}\nCorrect answer: {correct_text}",
+                    inline=False,
+                )
         result_image = PASS_IMAGE_URL if passed else FAIL_IMAGE_URL
         if result_image.strip():
             result.set_image(url=result_image.strip())
