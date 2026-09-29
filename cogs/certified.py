@@ -10,6 +10,7 @@ from discord.ext import commands
 ATTEMPT_LOG_CHANNEL_ID = 1554566076090683422
 PASSING_SCORE = 4
 QUESTION_COUNT = 5
+QUESTION_LABEL_DIVIDER = "<:GreyLine:1453056173593985034>"
 PANEL_TITLE = "<:guseal:1398999132357525586> // Certification Courses"
 PANEL_DESCRIPTION = "Choose a certification course to begin. You will be presented with a brief explanation, followed by 5 multiple-choice questions."
 PANEL_IMAGE_URL = "https://cdn.discordapp.com/attachments/1398427497724383356/1554603759747993622/Templateeee.png?backend=b2&ex=6abd7d13&is=6abc2b93&hm=736b215c460f0ce60abfb06347de2e03e64ecd0250049b74c486eaea7291cf01&"
@@ -212,16 +213,21 @@ class CourseSessionView(discord.ui.View):
 
     def question_embed(self) -> discord.Embed:
         question = self.course["questions"][self.question_index]
+        answer_lines = [_display(question["prompt"]), ""]
+        for index, choice_index in enumerate(self.choice_orders[self.question_index]):
+            letter = chr(ord("A") + index)
+            answer_lines.extend(
+                [
+                    f"{QUESTION_LABEL_DIVIDER}{QUESTION_LABEL_DIVIDER}**{letter}**"
+                    f"{QUESTION_LABEL_DIVIDER}{QUESTION_LABEL_DIVIDER}",
+                    _display(question["choices"][choice_index]),
+                    "",
+                ]
+            )
         embed = discord.Embed(
             title=f"Question {self.question_index + 1}/{QUESTION_COUNT}",
-            description=_display(question["prompt"]),
+            description="\n".join(answer_lines).rstrip(),
         )
-        for index, choice_index in enumerate(self.choice_orders[self.question_index]):
-            embed.add_field(
-                name=chr(ord("A") + index),
-                value=_display(question["choices"][choice_index]),
-                inline=False,
-            )
         image_url = question.get("image_url", "").strip()
         if image_url:
             embed.set_image(url=image_url)
