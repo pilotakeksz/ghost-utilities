@@ -13,6 +13,8 @@ QUESTION_COUNT = 5
 PANEL_TITLE = ""
 PANEL_DESCRIPTION = ""
 PANEL_IMAGE_URL = "https://cdn.discordapp.com/attachments/1398427497724383356/1554603759747993622/Templateeee.png?backend=b2&ex=6abd7d13&is=6abc2b93&hm=736b215c460f0ce60abfb06347de2e03e64ecd0250049b74c486eaea7291cf01&"
+PASS_IMAGE_URL = "https://cdn.discordapp.com/attachments/1398427497724383356/1554608704668831764/Templateeee.png?backend=b2&ex=6abd81ae&is=6abc302e&hm=5e46e0cf45c55085e9d2a1916af6cf3fea6adace3ec7e594795f9ee521ddddcd&"
+FAIL_IMAGE_URL = "https://cdn.discordapp.com/attachments/1398427497724383356/1554608999423541348/Templateeee.png?backend=b2&ex=6abd81f4&is=6abc3074&hm=5a062ddf49ced7286aa2cdbde5262a6dbe8620b0b20c7f0e786a7621ce2d7a1d&"
 
 # Fill in each course's explanation, role ID, question, three choices, and
 # correct answer index (0=A, 1=B, 2=C). Keep exactly five questions per course.
@@ -22,19 +24,23 @@ CERTIFICATIONS: Dict[str, Dict[str, Any]] = {
         "role_id": 1554580639523545118,
         "explanation_title": "Boat Certification — Introduction",
         "explanation": (
-            "While on maritime patrol, all Florida state boating laws apply. "
-            "At all times, a proper lookout must be kept, and travel must be done at a safe speed. "
-            "When two power-driven vessels are meeting head-on, both vessels should alter course to starboard "
-            "(right) and pass port-to-port (left side to left side). When two power-driven vessels cross at an angle, "
-            "the vessel that has the other vessel on its starboard (right) side must give way and avoid crossing "
-            "ahead if circumstances allow; the other vessel generally maintains its course and speed. "
-            "You must at all times follow the applicable right-of-way rules: "
-            "the vessel required to give way must take early and clear action to keep clear, while the stand-on "
-            "vessel generally maintains its course and speed but must act if necessary to avoid collision. "
-            "Depending on the situation, power-driven vessels must also keep clear of vessels not under command, "
-            "restricted in their ability to maneuver, engaged in fishing, sailing, or constrained by draft. "
-            "If involved in a boating collision or other casualty, render reasonable assistance to anyone affected "
-            "when you can do so without serious danger to your own vessel or people aboard, and provide "
+            "**FLORIDA BOATING BASICS**\n"
+            "Florida boating laws apply while on maritime patrol. Always maintain a proper lookout "
+            "and travel at a safe speed.\n\n"
+            "**MEETING HEAD-ON**\n"
+            "When two power-driven vessels meet head-on, both should turn to starboard (right) "
+            "and pass port-to-port.\n\n"
+            "**CROSSING SITUATIONS**\n"
+            "When two power-driven vessels cross at an angle, the vessel with the other vessel "
+            "on its starboard (right) side must give way and, when possible, avoid crossing ahead. "
+            "The other vessel generally maintains course and speed, but must act if needed to avoid a collision.\n\n"
+            "**OTHER VESSELS**\n"
+            "Follow applicable right-of-way rules. Depending on the circumstances, power-driven vessels "
+            "must keep clear of vessels that are not under command, restricted in their ability to maneuver, "
+            "engaged in fishing, under sail, or constrained by draft.\n\n"
+            "**DUTY TO ASSIST**\n"
+            "After a boating collision or casualty, render reasonable assistance to anyone affected when "
+            "you can do so without serious danger to your vessel or people aboard. Provide required "
             "information to the other operator."
         ),
         "explanation_image_url": "https://media.discordapp.net/attachments/1398427497724383356/1554602994404827166/31.Starboard.png?backend=b2&ex=6abd7c5c&is=6abc2adc&hm=b1b874a967ce347b91aa454a347fa2bc39f18b0cddb849eb36ab11eb8554683a&=&format=webp&quality=lossless",
@@ -43,7 +49,7 @@ CERTIFICATIONS: Dict[str, Dict[str, Any]] = {
             {"prompt": "Which direction must both vessels alter course toward?", "choices": ["Starboard", "Port", "Up"], "correct_index": 0, "image_url": "https://cdn.discordapp.com/attachments/1398427497724383356/1554605695008243815/5d260904-d712-4ef0-a760-4216a900569b.png?backend=b2&ex=6abd7ee0&is=6abc2d60&hm=da82cc271dc9a01aff9d35ef47404e2cddbdaf0adc52255d9964e05f0b523029&"},
             {"prompt": "Which vessel would have right of way?", "choices": ["Vessel A", "Vessel B", "Neither Vessel"], "correct_index": 1, "image_url": "https://cdn.discordapp.com/attachments/1398427497724383356/1554606390775910571/e41d1490-f351-4547-b0f8-7a7ea778985a.png?backend=b2&ex=6abd7f86&is=6abc2e06&hm=1815f6bdfd60183976f3766d6e47ac6b3c66bc3d4245e05a93ad18f18f66b015&"},
             {"prompt": "Do you have the obligation to render aid to others in distress when safe to do so?", "choices": ["Yes", "No", "It depends"], "correct_index": 0, "image_url": ""},
-            {"prompt": "Visibilty is poor, and traffic is heavy. Which of these is the safest option?", "choices": ["Increase speed", "Maintain speed", "Reduce speed"], "correct_index": None, "image_url": "https://cdn.discordapp.com/attachments/1398427497724383356/1554607564019204197/360_F_304677008_d6yFl6obkIVElw8Hy7giHdkb3v3WTzCx.png?backend=b2&ex=6abd809e&is=6abc2f1e&hm=6d4d2086e05ddc26d0bbaaeb7d53ff624a4a11bb877b93467c4d91ff66bdb203&"},
+            {"prompt": "Visibilty is poor, and traffic is heavy. Which of these is the safest option?", "choices": ["Increase speed to leave danger faster", "Maintain current speed", "Reduce speed so as to be able to react to changes"], "correct_index": 2, "image_url": "https://cdn.discordapp.com/attachments/1398427497724383356/1554607564019204197/360_F_304677008_d6yFl6obkIVElw8Hy7giHdkb3v3WTzCx.png?backend=b2&ex=6abd809e&is=6abc2f1e&hm=6d4d2086e05ddc26d0bbaaeb7d53ff624a4a11bb877b93467c4d91ff66bdb203&"},
         ],
     },
     "certification_2": {
@@ -140,6 +146,7 @@ class CourseSessionView(discord.ui.View):
                 f"You need at least {PASSING_SCORE}/{QUESTION_COUNT} correct to pass. "
                 "Press **Next** when you are ready."
             ),
+            color=discord.Color.blue(),
         )
         image_url = self.course.get("explanation_image_url", "").strip()
         if image_url:
@@ -170,7 +177,7 @@ class CourseSessionView(discord.ui.View):
         return True
 
     @discord.ui.button(
-        label="Next", style=discord.ButtonStyle.success, row=0, custom_id="certified_next"
+        label="Start Quiz", style=discord.ButtonStyle.success, row=0, custom_id="certified_next"
     )
     async def next_page(
         self, interaction: discord.Interaction, button: discord.ui.Button
@@ -178,6 +185,7 @@ class CourseSessionView(discord.ui.View):
         if not await self._check_owner(interaction):
             return
         self.question_index = 0
+        self.remove_item(button)
         for button in self.answer_buttons:
             self.add_item(button)
         self._set_page_controls()
@@ -232,19 +240,20 @@ class CourseSessionView(discord.ui.View):
             f"Score: {score}/{QUESTION_COUNT}; answers: {answer_summary}; {role_note or 'role not applicable'}",
         )
 
+        percentage = round(score * 100 / QUESTION_COUNT)
         result = discord.Embed(
-            title="Certification complete",
+            title="Certification Passed" if passed else "Certification Not Passed",
             description=(
-                f"You scored **{score}/{QUESTION_COUNT}**. "
-                + ("You passed. " if passed else "You did not pass; you may try again. ")
+                f"You scored **{score}/{QUESTION_COUNT} ({percentage}%)**.\n\n"
+                + ("Congratulations! You passed. " if passed else "You may review the course and try again. ")
                 + role_note
             ),
-            color=discord.Color.green() if passed else discord.Color.orange(),
+            color=discord.Color.green() if passed else discord.Color.red(),
         )
-        for child in self.children:
-            if isinstance(child, discord.ui.Button):
-                child.disabled = True
-        await interaction.edit_original_response(embed=result, view=self)
+        result_image = PASS_IMAGE_URL if passed else FAIL_IMAGE_URL
+        if result_image.strip():
+            result.set_image(url=result_image.strip())
+        await interaction.edit_original_response(embed=result, view=None)
         self.stop()
 
     @discord.ui.button(label="A", style=discord.ButtonStyle.secondary, row=1, custom_id="certified_answer_a")
