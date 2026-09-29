@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import random
 from typing import Any, Dict, List, Optional
 
 import discord
@@ -47,7 +48,7 @@ CERTIFICATIONS: Dict[str, Dict[str, Any]] = {
         "questions": [
             {"prompt": "In this scenario, which vessel must give way?", "choices": ["Vessel A", "Vessel B", "Neither Vessel"], "correct_index": 0, "image_url": "https://cdn.discordapp.com/attachments/1398427497724383356/1554604537745113248/images.png?backend=b2&ex=6abd7dcc&is=6abc2c4c&hm=42a527ac65b6d9a7df836c672b44d764ebc83bcf98d6c9625524f9866aff15d1&"},
             {"prompt": "Which direction must both vessels alter course toward?", "choices": ["Starboard", "Port", "Up"], "correct_index": 0, "image_url": "https://cdn.discordapp.com/attachments/1398427497724383356/1554605695008243815/5d260904-d712-4ef0-a760-4216a900569b.png?backend=b2&ex=6abd7ee0&is=6abc2d60&hm=da82cc271dc9a01aff9d35ef47404e2cddbdaf0adc52255d9964e05f0b523029&"},
-            {"prompt": "Which vessel would have right of way?", "choices": ["Vessel A", "Vessel B", "Neither Vessel"], "correct_index": 1, "image_url": "https://cdn.discordapp.com/attachments/1398427497724383356/1554606390775910571/e41d1490-f351-4547-b0f8-7a7ea778985a.png?backend=b2&ex=6abd7f86&is=6abc2e06&hm=1815f6bdfd60183976f3766d6e47ac6b3c66bc3d4245e05a93ad18f18f66b015&"},
+            {"prompt": "Which vessel would have right of way?", "choices": ["Vessel A", "Vessel B", "Neither Vessel"], "correct_index": 0, "image_url": "https://cdn.discordapp.com/attachments/1398427497724383356/1554606390775910571/e41d1490-f351-4547-b0f8-7a7ea778985a.png?backend=b2&ex=6abd7f86&is=6abc2e06&hm=1815f6bdfd60183976f3766d6e47ac6b3c66bc3d4245e05a93ad18f18f66b015&"},
             {"prompt": "Do you have the obligation to render aid to others in distress when safe to do so?", "choices": ["Yes", "No", "It depends"], "correct_index": 0, "image_url": ""},
             {"prompt": "Visibilty is poor, and traffic is heavy. Which of these is the safest option?", "choices": ["Increase speed to leave danger faster", "Maintain current speed", "Reduce speed so as to be able to react to changes"], "correct_index": 2, "image_url": "https://cdn.discordapp.com/attachments/1398427497724383356/1554607564019204197/360_F_304677008_d6yFl6obkIVElw8Hy7giHdkb3v3WTzCx.png?backend=b2&ex=6abd809e&is=6abc2f1e&hm=6d4d2086e05ddc26d0bbaaeb7d53ff624a4a11bb877b93467c4d91ff66bdb203&"},
         ],
@@ -91,12 +92,6 @@ class CoursePickerView(discord.ui.View):
         await interaction.response.send_message(
             embed=view.explanation_embed(), view=view, ephemeral=True
         )
-        await self.cog.log_attempt(
-            interaction,
-            course_key,
-            "STARTED",
-            "The participant opened the course; completion is not yet recorded.",
-        )
 
     @discord.ui.button(
         label="Boat Certification", style=discord.ButtonStyle.primary, custom_id="certified_select_1"
@@ -123,6 +118,11 @@ class CourseSessionView(discord.ui.View):
         self.user_id = user_id
         self.question_index: Optional[int] = None
         self.answers: List[int] = []
+        self.displayed_answers: List[int] = []
+        self.choice_orders: List[List[int]] = [
+            random.sample(range(len(question["choices"])), len(question["choices"]))
+            for question in self.course["questions"]
+        ]
         self.answer_buttons = [
             child for child in self.children
             if isinstance(child, discord.ui.Button)
@@ -159,9 +159,11 @@ class CourseSessionView(discord.ui.View):
             title=f"Question {self.question_index + 1}/{QUESTION_COUNT}",
             description=_display(question["prompt"]),
         )
-        for index, choice in enumerate(question["choices"]):
+        for index, choice_index in enumerate(self.choice_orders[self.question_index]):
             embed.add_field(
-                name=chr(ord("A") + index), value=_display(choice), inline=False
+                name=chr(ord("A") + index),
+                value=_display(question["choices"][choice_index]),
+                inline=False,
             )
         image_url = question.get("image_url", "").strip()
         if image_url:
@@ -210,7 +212,8 @@ class CourseSessionView(discord.ui.View):
             return
 
         question = self.course["questions"][self.question_index]
-        self.answers.append(choice_index)
+        self.displayed_answers.append(choice_index)
+        self.answers.append(self.choice_orders[self.question_index][choice_index])
         if self.question_index + 1 < QUESTION_COUNT:
             self.question_index += 1
             await interaction.response.edit_message(
@@ -230,7 +233,7 @@ class CourseSessionView(discord.ui.View):
 
         answer_summary = ", ".join(
             f"Q{index + 1}:{chr(ord('A') + answer)}"
-            for index, answer in enumerate(self.answers)
+            for index, answer in enumerate(self.displayed_answers)
         )
         outcome = "PASSED" if passed else "FAILED"
         await self.cog.log_attempt(
