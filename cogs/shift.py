@@ -179,7 +179,8 @@ class Store:
         self.meta.setdefault("cooldown_extensions", {})
         self.meta.setdefault("admin_cooldowns", {})
         self.meta.setdefault("excuses", {})
-        self.meta.setdefault("last_friday_quota_reminder", "")
+        self.meta.setdefault("last_sunday_quota_reminder", "")
+        self.meta.setdefault("last_tuesday_wave_rollover", "")
         self.meta.setdefault("infraction_ping_ts", {})
 
     def save(self):
@@ -369,12 +370,12 @@ class Store:
 
     def record_infraction_ping(self, user_id: int) -> bool:
         now = utcnow()
-        current_week = now.isocalendar()[:2]
+        current_week = (now.date() - dt.timedelta(days=(now.weekday() - 1) % 7)).isoformat()
 
         last_ping_ts = self.meta["infraction_ping_ts"].get(str(user_id))
         if last_ping_ts is not None:
             last_dt = int_to_ts(last_ping_ts)
-            last_week = last_dt.isocalendar()[:2]
+            last_week = (last_dt.date() - dt.timedelta(days=(last_dt.weekday() - 1) % 7)).isoformat()
             if last_week == current_week:
                 return False
 
@@ -883,27 +884,98 @@ class ShiftCog(commands.Cog):
         self.bot.add_view(ShiftManageView(bot))
 
     async def cog_load(self) -> None:
-        self.friday_quota_reminder.start()
+        self.sunday_quota_reminder.start()
+        self.tuesday_wave_rollover.start()
 
     async def cog_unload(self) -> None:
-        self.friday_quota_reminder.cancel()
+        self.sunday_quota_reminder.cancel()
+        self.tuesday_wave_rollover.cancel()
 
     @tasks.loop(time=dt.time(hour=14, minute=0, tzinfo=dt.timezone.utc))
-    async def friday_quota_reminder(self) -> None:
-        if utcnow().weekday() != 4:
+    async def sunday_quota_reminder(self) -> None:
+        if utcnow().weekday() != 6:
             return
         today = utcnow().date().isoformat()
-        if self.store.meta.get("last_friday_quota_reminder") == today:
+        if self.store.meta.get("last_sunday_quota_reminder") == today:
             return
         total = 0
         for guild in self.bot.guilds:
             total += await self._send_quota_reminders_for_guild(guild)
-        self.store.meta["last_friday_quota_reminder"] = today
+        self.store.meta["last_sunday_quota_reminder"] = today
         self.store.save()
 
-    @friday_quota_reminder.before_loop
-    async def before_friday_quota_reminder(self) -> None:
+    @sunday_quota_reminder.before_loop
+    async def before_sunday_quota_reminder(self) -> None:
         await self.bot.wait_until_ready()
+
+    @tasks.loop(time=dt.time(hour=23, minute=59, tzinfo=dt.timezone.utc))
+    async def tuesday_wave_rollover(self) -> None:
+        now = utcnow()
+        if now.weekday() != 1:
+            return
+        today = now.date().isoformat()
+        if self.store.meta.get("last_tuesday_wave_rollover") == today:
+            return
+        ongoing, archived_records = await self._rollover_wave(self.bot.guilds)
+        self.store.meta["last_tuesday_wave_rollover"] = today
+        self.store.save()
+        for guild in self.bot.guilds:
+            await self.log_event(
+                guild,
+                f"🔄 Automatic Tuesday wave rollover completed. Archived {archived_records} shift record(s) "
+                f"and cleared {ongoing} ongoing shift(s).",
+            )
+
+    @tuesday_wave_rollover.before_loop
+    async def before_tuesday_wave_rollover(self) -> None:
+        await self.bot.wait_until_ready()
+
+    async def _rollover_wave(self, guilds: List[discord.Guild]) -> Tuple[int, int]:
+        """Archive the current wave, assess quotas, and start the next wave."""
+        tracked_members: Dict[int, discord.Member] = {}
+        for guild in guilds:
+            manage_role = guild.get_role(ROLE_MANAGE_REQUIRED)
+            if manage_role:
+                tracked_members.update({member.id: member for member in manage_role.members})
+        excused_ids = {
+            member_id for member_id in tracked_members
+            if self.store.is_excused(member_id)
+        }
+
+        archived_records = len(self.store.records)
+        self.store.archive_wave()
+        ongoing = len(self.store.state)
+        self.store.state = {}
+        self.store.records = []
+        self.store.meta["last_reset_ts"] = ts_to_int(utcnow())
+        self.store.meta["infractions"] = {}
+        self.store.meta["infraction_ping_ts"] = {}
+        self.store.save()
+
+        for member_id, member in tracked_members.items():
+            mids = {role.id for role in member.roles}
+            if mids.intersection(TRAINEE_ROLES):
+                continue
+            exempt = (
+                QUOTA_ROLE_0 in mids or QUOTA_ROLE_ADMIN_0 in mids
+                or member_id in excused_ids or is_on_loa(member_id)
+            )
+            if exempt:
+                self.store.clear_misses(member_id)
+                continue
+            quota_minutes = await self._get_quota(member)
+            wave_seconds = self.store.total_gu_equiv(member_id, wave_index=0)
+            if quota_minutes > 0 and wave_seconds < quota_minutes * 60:
+                self.store.increment_miss(member_id)
+            else:
+                self.store.clear_misses(member_id)
+
+        for path in glob.glob(os.path.join(LOGS_DIR, "*.log")):
+            try:
+                os.remove(path)
+            except Exception:
+                pass
+        return ongoing, archived_records
 
     async def _members_needing_quota_reminder(
         self, guild: discord.Guild
@@ -942,7 +1014,7 @@ class ShiftCog(commands.Cog):
                 f"**Logged:** {human_td(gu_secs)}\n"
                 f"**Required:** {human_td(need_secs)}\n"
                 f"**Short by:** {human_td(short)}\n\n"
-                "Please complete your shifts before the wave ends."
+                "Please complete your shifts before the wave resets Tuesday at 23:59 UTC."
             )
             try:
                 await member.send(embed=embed)
@@ -1457,8 +1529,8 @@ class ShiftCog(commands.Cog):
             return
         await interaction.response.defer(ephemeral=True)
         n = await self._send_quota_reminders_for_guild(guild)
-        if utcnow().weekday() == 4 and n > 0:
-            self.store.meta["last_friday_quota_reminder"] = utcnow().date().isoformat()
+        if utcnow().weekday() == 6 and n > 0:
+            self.store.meta["last_sunday_quota_reminder"] = utcnow().date().isoformat()
             self.store.save()
         await interaction.followup.send(
             f"Sent **{n}** quota reminder(s).", ephemeral=True
@@ -1765,47 +1837,20 @@ class ShiftCog(commands.Cog):
                 await interaction.channel.send("Confirmation failed. No shifts voided.")
                 return
 
-            self.store.archive_wave()
-
-            ongoing = len(self.store.state)
-            self.store.state   = {}
-            self.store.records = []
-            self.store.meta["last_reset_ts"]       = ts_to_int(utcnow())
-            self.store.meta["infractions"]         = {}
-            self.store.meta["infraction_ping_ts"]  = {}
-            self.store.save()
-
-            manage_role = guild.get_role(ROLE_MANAGE_REQUIRED)
-            if manage_role:
-                for member in manage_role.members:
-                    mids = {r.id for r in member.roles}
-                    if any(r.id in TRAINEE_ROLES for r in member.roles):
-                        continue
-                    gu_secs       = self.store.total_gu_equiv(member.id, wave_index=0)
-                    quota_minutes = await self._get_quota(member)
-                    exempt = (
-                        QUOTA_ROLE_0 in mids or QUOTA_ROLE_ADMIN_0 in mids
-                        or self.store.is_excused(member.id)
-                        or is_on_loa(member.id)
-                    )
-                    if exempt:
-                        self.store.clear_misses(member.id)
-                    elif quota_minutes > 0 and gu_secs < quota_minutes * 60:
-                        self.store.increment_miss(member.id)
-                    else:
-                        self.store.clear_misses(member.id)
-
-            for path in glob.glob(os.path.join(LOGS_DIR, "*.log")):
-                try: os.remove(path)
-                except Exception: pass
+            ongoing, archived_records = await self._rollover_wave([guild])
+            if utcnow().weekday() == 1:
+                self.store.meta["last_tuesday_wave_rollover"] = utcnow().date().isoformat()
+                self.store.save()
 
             await self.log_event(
                 guild,
-                f"⚠️ Admin {user.mention} voided all shifts ({ongoing} ongoing). All times reset to 0. Wave archived."
+                f"⚠️ Admin {user.mention} voided all shifts ({ongoing} ongoing; "
+                f"{archived_records} records archived). All times reset to 0. Wave archived."
             )
             await interaction.channel.send(
                 embed=self.embed_warn(
-                    f"Voided all ongoing shifts ({ongoing}) and all records. All shift times reset to 0. Wave archived."))
+                    f"Voided all ongoing shifts ({ongoing}) and archived {archived_records} record(s). "
+                    "All shift times reset to 0. Wave archived."))
 
         elif action.value == "stats":
             await interaction.response.defer()

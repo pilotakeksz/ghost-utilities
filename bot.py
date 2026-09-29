@@ -33,9 +33,9 @@ if not encoded_token:
     raise ValueError("No DISCORD_BOT_TOKEN_BASE64 found in environment variables")
 
 try:
-    TOKEN = base64.b64decode(encoded_token).decode("utf-8")
-except Exception as e:
-    raise ValueError(f"Failed to decode DISCORD_BOT_TOKEN_BASE64: {e}")
+    TOKEN = base64.b64decode(encoded_token, validate=True).decode("utf-8")
+except (ValueError, UnicodeDecodeError):
+    TOKEN = encoded_token
 
 
 LOG_CHANNEL_ID = 1453463104531857548  

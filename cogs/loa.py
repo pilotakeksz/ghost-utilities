@@ -52,16 +52,16 @@ def get_last_request_date(user_id) -> datetime | None:
             return datetime.min.replace(tzinfo=timezone.utc)
     return max(_parse(r) for r in user_requests)
 
-def is_after_friday_cutoff(dt: datetime) -> bool:
-    """Return True if dt falls outside the Friday-by-23:59-UTC submission window.
-    Submissions on Saturday or Sunday (or after Friday 23:59 UTC) do not grant
+def is_after_monday_cutoff(dt: datetime) -> bool:
+    """Return True if dt falls outside the Monday-by-23:59-UTC submission window.
+    Submissions after Monday 23:59 UTC do not grant
     shift-infraction immunity if quota is not met."""
     weekday = dt.weekday()
-    if weekday < 4:
-        return False
-    if weekday == 4:
+    if weekday == 0:  # Monday
         return dt.hour > 23 or (dt.hour == 23 and dt.minute >= 59)
-    return True
+    if weekday == 1:  # Tuesday, after Monday cutoff and before the wave resets
+        return (dt.hour, dt.minute) < (23, 59)
+    return False
 
 def save_loa_request(request):
     ensure_dirs()
@@ -173,7 +173,7 @@ class LOARequestModal(discord.ui.Modal, title="LOA Request"):
             )
             return
 
-        submitted_after_cutoff = is_after_friday_cutoff(now)
+        submitted_after_cutoff = is_after_monday_cutoff(now)
 
         end_date = now + timedelta(days=days)
         request = {
@@ -205,7 +205,7 @@ class LOARequestModal(discord.ui.Modal, title="LOA Request"):
         if submitted_after_cutoff:
             embed.add_field(
                 name="⚠️ Shift Infraction Immunity",
-                value="This request was submitted **after Friday 23:59 UTC**. "
+                value="This request was submitted **after Monday 23:59 UTC**. "
                       "If quota is not met, **shift infractions are not waived** for this LOA.",
                 inline=False
             )
@@ -302,7 +302,7 @@ class LOAReviewView(discord.ui.View):
                     if not shift_immunity:
                         dm_embed.add_field(
                             name="⚠️ Shift Infraction Immunity",
-                            value="Because your request was submitted after **Friday 23:59 UTC**, "
+                            value="Because your request was submitted after **Monday 23:59 UTC**, "
                                   "you are **not** exempt from shift infractions if quota is not met.",
                             inline=False
                         )
