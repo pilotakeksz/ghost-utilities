@@ -104,6 +104,14 @@ class CourseSessionView(discord.ui.View):
         self.user_id = user_id
         self.question_index: Optional[int] = None
         self.answers: List[int] = []
+        self.answer_buttons = [
+            child for child in self.children
+            if isinstance(child, discord.ui.Button)
+            and child.custom_id
+            and child.custom_id.startswith("certified_answer_")
+        ]
+        for button in self.answer_buttons:
+            self.remove_item(button)
         self._set_page_controls()
 
     @property
@@ -150,6 +158,8 @@ class CourseSessionView(discord.ui.View):
         if not await self._check_owner(interaction):
             return
         self.question_index = 0
+        for button in self.answer_buttons:
+            self.add_item(button)
         self._set_page_controls()
         await interaction.response.edit_message(embed=self.question_embed(), view=self)
 

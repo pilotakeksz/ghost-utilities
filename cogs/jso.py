@@ -6,18 +6,29 @@ warrants.py — FHP Ghost Unit cross-server warrant system.
 from __future__ import annotations
 
 import uuid
+import os
+import hmac
+import asyncio
 from datetime import datetime, timezone
 from typing import Optional
 
 import aiosqlite
 import aiohttp
 import discord
+from aiohttp import web
 from discord import app_commands
 from discord.ext import commands
 
 # ─────────────────────────── DB ───────────────────────────────────────────────
 
-WARRANTS_DB_PATH = "/opt/ghost-bot/warrants.db"
+WARRANTS_DB_PATH = os.path.abspath(os.getenv(
+    "WARRANTS_DB_PATH",
+    os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "warrants.db"),
+))
+WARRANTS_SYNC_TOKEN = os.getenv("WARRANTS_SYNC_TOKEN", "")
+WARRANTS_SYNC_PEER_URL = os.getenv("WARRANTS_SYNC_PEER_URL", "").rstrip("/")
+WARRANTS_SYNC_HOST = os.getenv("WARRANTS_SYNC_HOST", "0.0.0.0")
+WARRANTS_SYNC_PORT = os.getenv("WARRANTS_SYNC_PORT", "8765")
 
 # ─────────────────────────── SERVER A ─────────────────────────────────────────
 
@@ -97,6 +108,7 @@ def _server_config(guild_id: int) -> tuple[int, int, int] | None:
 # ─────────────────────────── DATABASE ─────────────────────────────────────────
 
 async def _init_db():
+    os.makedirs(os.path.dirname(WARRANTS_DB_PATH), exist_ok=True)
     async with aiosqlite.connect(WARRANTS_DB_PATH) as db:
         await db.execute("""
         CREATE TABLE IF NOT EXISTS warrants (
@@ -116,6 +128,29 @@ async def _init_db():
         )
         """)
         await db.commit()
+
+
+async def _insert_synced_warrant(warrant: dict) -> None:
+    async with aiosqlite.connect(WARRANTS_DB_PATH) as db:
+        await db.execute(
+            """
+            INSERT OR IGNORE INTO warrants VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)
+            """,
+            (
+                warrant["warrant_id"], warrant["suspect"], warrant["charges"],
+                warrant.get("vehicle_info"), warrant.get("last_location"),
+                warrant["issued_by"], warrant["issued_at"], warrant["headshot_url"],
+                warrant["status"], warrant.get("closed_by"), warrant.get("closed_at"),
+            ),
+        )
+        await db.commit()
+
+
+async def _get_all_warrants() -> list[dict]:
+    async with aiosqlite.connect(WARRANTS_DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT * FROM warrants") as cur:
+            return [dict(row) for row in await cur.fetchall()]
 
 
 async def _insert_warrant(warrant_id, suspect, charges, vehicle_info, last_location, issued_by, headshot_url):
@@ -161,6 +196,8 @@ async def _set_message_ids(warrant_id: str, a: int | None, b: int | None):
 
 def _build_warrant_embed(warrant, status=None, closed_by=None, closed_at=None):
     colour = discord.Colour.red() if warrant["status"] == "active" else discord.Colour.green()
+    closed_by = closed_by or warrant.get("closed_by")
+    closed_at = closed_at or warrant.get("closed_at")
 
     e = _base_embed(colour)
 
@@ -229,8 +266,8 @@ class WarrantView(discord.ui.View):
 
     async def _close(self, interaction, status):
         try:
-            # Only allow users with SERVER_A_PERSONNEL_ROLE to close warrants
-            if not interaction.guild or SERVER_A_PERSONNEL_ROLE not in [r.id for r in interaction.user.roles]:
+            config = _server_config(interaction.guild.id) if interaction.guild else None
+            if not config or config[1] not in [r.id for r in interaction.user.roles]:
                 return await interaction.response.send_message("You do not have permission to use this.", ephemeral=True)
 
             await interaction.response.defer(ephemeral=True)
@@ -253,6 +290,9 @@ class WarrantView(discord.ui.View):
             disabled_view = WarrantView(self.warrant_id, disabled=True)
 
             await _mirror_edit(interaction.client, updated, embed, disabled_view)
+            cog = interaction.client.get_cog("WarrantsCog")
+            if cog:
+                await cog._send_peer("status", updated)
 
             await interaction.followup.send(f"{status.title()} complete.", ephemeral=True)
 
@@ -273,7 +313,9 @@ async def _post_to_channel(bot, guild_id, channel_id, embed, view, ping_role_id)
             print(f"[warrants] Missing guild {guild_id}")
             return None
 
-        channel = guild.get_channel(channel_id)
+        channel = guild.get_channel(channel_id) or bot.get_channel(channel_id)
+        if channel is None:
+            channel = await bot.fetch_channel(channel_id)
         if not isinstance(channel, discord.TextChannel):
             print(f"[warrants] Missing channel {channel_id}")
             return None
@@ -305,7 +347,7 @@ async def _mirror_edit(bot, warrant, embed, view):
         if not guild:
             continue
 
-        channel = guild.get_channel(ch)
+        channel = guild.get_channel(ch) or bot.get_channel(ch)
         if not channel:
             continue
 
@@ -321,9 +363,185 @@ async def _mirror_edit(bot, warrant, embed, view):
 class WarrantsCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        self._http_session: Optional[aiohttp.ClientSession] = None
+        self._web_runner: Optional[web.AppRunner] = None
+        self._reconcile_task: Optional[asyncio.Task] = None
 
     async def cog_load(self):
         await _init_db()
+        for warrant in await _get_all_warrants():
+            self.bot.add_view(
+                WarrantView(warrant["warrant_id"], disabled=warrant["status"] != "active")
+            )
+
+        if not WARRANTS_SYNC_TOKEN:
+            print("[warrants] Remote sync disabled: WARRANTS_SYNC_TOKEN is not configured.")
+            return
+
+        try:
+            port = int(WARRANTS_SYNC_PORT)
+            app = web.Application(client_max_size=1024 * 1024)
+            app.router.add_post("/api/warrants/{event}", self._receive_sync)
+            self._web_runner = web.AppRunner(app)
+            await self._web_runner.setup()
+            site = web.TCPSite(self._web_runner, WARRANTS_SYNC_HOST, port)
+            await site.start()
+            self._http_session = aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=15)
+            )
+            print(f"[warrants] Sync receiver listening on {WARRANTS_SYNC_HOST}:{port}.")
+            if WARRANTS_SYNC_PEER_URL:
+                self._reconcile_task = asyncio.create_task(
+                    self._sync_existing_warrants(),
+                    name="warrant-peer-reconciliation",
+                )
+        except Exception as e:
+            print(f"[warrants] Could not start sync receiver: {e}")
+            if self._web_runner:
+                await self._web_runner.cleanup()
+                self._web_runner = None
+
+    async def cog_unload(self):
+        if self._reconcile_task and not self._reconcile_task.done():
+            self._reconcile_task.cancel()
+            try:
+                await self._reconcile_task
+            except asyncio.CancelledError:
+                pass
+        if self._http_session and not self._http_session.closed:
+            await self._http_session.close()
+        if self._web_runner:
+            await self._web_runner.cleanup()
+            self._web_runner = None
+
+    async def _sync_existing_warrants(self) -> None:
+        for warrant in await _get_all_warrants():
+            event = "issue" if warrant["status"] == "active" else "status"
+            await self._send_peer(event, warrant)
+
+    async def _send_peer(self, event: str, warrant: dict) -> None:
+        if not WARRANTS_SYNC_TOKEN or not WARRANTS_SYNC_PEER_URL:
+            return
+        if self._http_session is None or self._http_session.closed:
+            self._http_session = aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=15)
+            )
+
+        url = f"{WARRANTS_SYNC_PEER_URL}/api/warrants/{event}"
+        headers = {"Authorization": f"Bearer {WARRANTS_SYNC_TOKEN}"}
+        for attempt, delay in enumerate((0, 1, 3), start=1):
+            if delay:
+                await asyncio.sleep(delay)
+            try:
+                async with self._http_session.post(
+                    url, json=warrant, headers=headers
+                ) as response:
+                    if response.status < 300:
+                        return
+                    error_text = (await response.text())[:300]
+                    print(
+                        f"[warrants] Peer sync {event} failed (HTTP {response.status}, "
+                        f"attempt {attempt}): {error_text}"
+                    )
+            except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+                print(f"[warrants] Peer sync {event} attempt {attempt} failed: {e}")
+
+    async def _receive_sync(self, request: web.Request) -> web.Response:
+        authorization = request.headers.get("Authorization", "")
+        supplied_token = authorization.removeprefix("Bearer ")
+        if not hmac.compare_digest(supplied_token, WARRANTS_SYNC_TOKEN):
+            return web.json_response({"error": "unauthorized"}, status=401)
+
+        event = request.match_info.get("event")
+        if event not in {"issue", "status"}:
+            return web.json_response({"error": "unknown event"}, status=404)
+        try:
+            warrant = await request.json()
+            required = (
+                "warrant_id", "suspect", "charges", "issued_by", "issued_at",
+                "headshot_url", "status",
+            )
+            if not isinstance(warrant, dict) or any(
+                not isinstance(warrant.get(key), str) for key in required
+            ):
+                return web.json_response({"error": "invalid warrant payload"}, status=400)
+            if (
+                not 1 <= len(warrant["warrant_id"]) <= 32
+                or warrant["status"] not in {"active", "executed", "voided"}
+                or (event == "issue" and warrant["status"] != "active")
+            ):
+                return web.json_response({"error": "invalid warrant fields"}, status=400)
+
+            await _insert_synced_warrant(warrant)
+            if event == "status":
+                await _close_warrant(
+                    warrant["warrant_id"],
+                    warrant.get("closed_by") or "Unknown",
+                    warrant["status"],
+                )
+            stored_warrant = await _get_warrant(warrant["warrant_id"])
+            if stored_warrant is None:
+                return web.json_response({"error": "warrant could not be stored"}, status=500)
+
+            await self._ensure_local_posts(stored_warrant)
+            return web.json_response({"ok": True, "warrant_id": warrant["warrant_id"]})
+        except Exception as e:
+            print(f"[warrants] Incoming sync error: {e}")
+            return web.json_response({"error": "sync failed"}, status=500)
+
+    async def _ensure_local_posts(self, warrant: dict) -> None:
+        embed = _build_warrant_embed(warrant)
+        view = WarrantView(warrant["warrant_id"], disabled=warrant["status"] != "active")
+        self.bot.add_view(view)
+        message_ids = [warrant.get("msg_id_a"), warrant.get("msg_id_b")]
+        channels = [
+            (SERVER_A_GUILD_ID, SERVER_A_WARRANT_CHANNEL, SERVER_A_PING_ROLE),
+            (SERVER_B_GUILD_ID, SERVER_B_WARRANT_CHANNEL, SERVER_B_PING_ROLE),
+        ]
+
+        for index, (guild_id, channel_id, ping_role_id) in enumerate(channels):
+            guild = self.bot.get_guild(guild_id)
+            if guild is None:
+                continue
+            channel = guild.get_channel(channel_id)
+            if channel is None:
+                try:
+                    fetched = await self.bot.fetch_channel(channel_id)
+                    channel = fetched if isinstance(fetched, discord.TextChannel) else None
+                except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                    channel = None
+            if not isinstance(channel, discord.TextChannel):
+                print(f"[warrants] Configured channel {channel_id} is unavailable.")
+                continue
+
+            msg_id = message_ids[index]
+            if msg_id:
+                try:
+                    message = await channel.fetch_message(int(msg_id))
+                    await message.edit(embed=embed, view=view)
+                    continue
+                except discord.NotFound:
+                    message_ids[index] = None
+                except (discord.Forbidden, discord.HTTPException) as e:
+                    print(f"[warrants] Could not update message {msg_id}: {e}")
+                    continue
+
+            message = await _post_to_channel(
+                self.bot,
+                guild_id,
+                channel_id,
+                embed,
+                view,
+                ping_role_id if warrant["status"] == "active" else 0,
+            )
+            if message:
+                message_ids[index] = message.id
+
+        await _set_message_ids(
+            warrant["warrant_id"],
+            int(message_ids[0]) if message_ids[0] else None,
+            int(message_ids[1]) if message_ids[1] else None,
+        )
 
     @app_commands.command(name="issue_warrant")
     async def issue_warrant(self, interaction, suspect: str, charges: str,
@@ -331,13 +549,9 @@ class WarrantsCog(commands.Cog):
                             last_location: Optional[str] = None):
 
         try:
-            # Only allow users with SERVER_A_PERSONNEL_ROLE to issue warrants
-            if not interaction.guild or SERVER_A_PERSONNEL_ROLE not in [r.id for r in interaction.user.roles]:
+            cfg = _server_config(interaction.guild.id) if interaction.guild else None
+            if not cfg or cfg[1] not in [r.id for r in interaction.user.roles]:
                 return await interaction.response.send_message("You do not have permission to use this command.", ephemeral=True)
-
-            cfg = _server_config(interaction.guild.id)
-            if not cfg:
-                return await interaction.response.send_message("No permission", ephemeral=True)
 
             await interaction.response.defer(ephemeral=True)
 
@@ -353,27 +567,9 @@ class WarrantsCog(commands.Cog):
             )
 
             warrant = await _get_warrant(warrant_id)
-            embed = _build_warrant_embed(warrant)
-
-            view = WarrantView(warrant_id)
-            self.bot.add_view(view)
-
-            cfg_a = _server_config(SERVER_A_GUILD_ID)
-            cfg_b = _server_config(SERVER_B_GUILD_ID)
-
-            msg_a = await _post_to_channel(self.bot, SERVER_A_GUILD_ID,
-                                           SERVER_A_WARRANT_CHANNEL,
-                                           embed, view, cfg_a[2])
-
-            msg_b = await _post_to_channel(self.bot, SERVER_B_GUILD_ID,
-                                           SERVER_B_WARRANT_CHANNEL,
-                                           embed, view, cfg_b[2])
-
-            await _set_message_ids(
-                warrant_id,
-                msg_a.id if msg_a else None,
-                msg_b.id if msg_b else None
-            )
+            await self._ensure_local_posts(warrant)
+            warrant = await _get_warrant(warrant_id)
+            await self._send_peer("issue", warrant)
 
             await interaction.followup.send(f"Issued `{warrant_id}`", ephemeral=True)
 

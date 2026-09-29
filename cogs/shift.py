@@ -421,9 +421,12 @@ class Store:
 
 class ShiftTypeView(discord.ui.View):
     def __init__(self, cog: "ShiftCog", manage_view: "ShiftManageView"):
-        super().__init__(timeout=60)
+        super().__init__(timeout=900)
         self.cog = cog
         self.manage_view = manage_view
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        return await self.manage_view.interaction_check(interaction)
 
     async def _start(self, interaction: discord.Interaction, shift_type: str):
         cog   = self.cog
@@ -467,27 +470,60 @@ class ShiftTypeView(discord.ui.View):
         except discord.Forbidden:
             pass
         await cog.log_event(guild, f"🟢 {user.mention} started a **{shift_type}** shift.", actor=user)
-        embed = await cog.build_manage_embed(user)
-        await interaction.response.edit_message(embed=embed, view=self.manage_view)
+        embed = cog.embed_info(
+            "Your shift has started as a **GU** shift by default. Choose a type below, "
+            "or press **Done** to keep GU."
+        )
+        embed.add_field(name="🔵 GU Shift", value="Regular Ghost Unit shift.", inline=False)
+        embed.add_field(name="🔴 SRT Shift", value="Special Response Team shift.", inline=False)
+        embed.add_field(name="🟠 HSPU Shift", value="HSPU shift.", inline=False)
+        await interaction.response.edit_message(embed=embed, view=self)
         try:
             await cog.update_on_duty_message()
         except Exception:
             pass
 
+    async def _select_type(self, interaction: discord.Interaction, shift_type: str) -> None:
+        user = interaction.user
+        guild = interaction.guild
+        state = self.cog.store.get_user_state(user.id)
+        if guild is None or state is None:
+            embed = self.cog.embed_warn("Your shift is no longer active.")
+            await interaction.response.edit_message(embed=embed, view=self.manage_view)
+            return
+
+        previous_type = state.get("shift_type", SHIFT_TYPE_NORMAL)
+        state["shift_type"] = shift_type
+        self.cog.store.save()
+        if previous_type != shift_type:
+            await self.cog.log_event(
+                guild,
+                f"🔄 {user.mention} changed their active shift type from **{previous_type}** "
+                f"to **{shift_type}**.",
+                actor=user,
+            )
+
+        embed = await self.cog.build_manage_embed(user)
+        await interaction.response.edit_message(embed=embed, view=self.manage_view)
+        try:
+            await self.cog.update_on_duty_message()
+        except Exception:
+            pass
+
     @discord.ui.button(label="🔵 GU Shift", style=discord.ButtonStyle.primary)
     async def gu_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self._start(interaction, SHIFT_TYPE_NORMAL)
+        await self._select_type(interaction, SHIFT_TYPE_NORMAL)
 
     @discord.ui.button(label="🔴 SRT Shift", style=discord.ButtonStyle.danger)
     async def srt_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self._start(interaction, SHIFT_TYPE_SRT)
+        await self._select_type(interaction, SHIFT_TYPE_SRT)
 
     @discord.ui.button(label="🟠 HSPU Shift", style=discord.ButtonStyle.secondary)
     async def hspu_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self._start(interaction, SHIFT_TYPE_HSPU)
+        await self._select_type(interaction, SHIFT_TYPE_HSPU)
 
-    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
-    async def cancel_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+    @discord.ui.button(label="Done", style=discord.ButtonStyle.secondary)
+    async def done_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         embed = await self.cog.build_manage_embed(interaction.user)
         await interaction.response.edit_message(embed=embed, view=self.manage_view)
 
@@ -552,11 +588,7 @@ class ShiftManageView(discord.ui.View):
             return
 
         type_view = ShiftTypeView(cog, self)
-        embed = cog.embed_info("Select your shift type:")
-        embed.add_field(name="🔵 GU Shift",   value="Regular Ghost Unit shift. 2h/week quota.", inline=False)
-        embed.add_field(name="🔴 SRT Shift",  value="Special Response Team shift. 1 shift (≥15 min)/week quota.", inline=False)
-        embed.add_field(name="🟠 HSPU Shift", value=f"HSPU shift. {HSPU_QUOTA_MINUTES}min/week quota.", inline=False)
-        await interaction.response.edit_message(embed=embed, view=type_view)
+        await type_view._start(interaction, SHIFT_TYPE_NORMAL)
 
     @discord.ui.button(label="Toggle Break", style=discord.ButtonStyle.secondary, custom_id="shift_break")
     async def break_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -1422,7 +1454,9 @@ class ShiftCog(commands.Cog):
         if s or not parts: parts.append(f"{s}s")
         return " ".join(parts)
 
-    @app_commands.command(name="shift_manage", description="Open the shift management panel.")
+    shift_group = app_commands.Group(name="shift", description="Shift management commands.")
+
+    @shift_group.command(name="manage", description="Open the shift management panel.")
     async def shift_manage(self, interaction: discord.Interaction):
         user  = interaction.user
         guild = interaction.guild
@@ -1446,7 +1480,7 @@ class ShiftCog(commands.Cog):
         embed = await self.build_manage_embed(user)
         await interaction.response.send_message(embed=embed, view=view)
 
-    @app_commands.command(name="shift_leaderboard", description="Show the shift leaderboard.")
+    @shift_group.command(name="leaderboard", description="Show the shift leaderboard.")
     @app_commands.describe(wave="Previous wave index (0=last wave, 1=two waves ago, etc). Omit for current wave.")
     async def shift_leaderboard(self, interaction: discord.Interaction, wave: Optional[int] = None):
         guild = interaction.guild
@@ -1471,7 +1505,7 @@ class ShiftCog(commands.Cog):
         emb.description = "\n".join(lines)
         await interaction.response.send_message(embed=emb, view=ShiftLeaderboardView(self, guild, wave_index=wave))
 
-    @app_commands.command(name="shift_online", description="Show who is currently on shift.")
+    @shift_group.command(name="online", description="Show who is currently on shift.")
     async def shift_online(self, interaction: discord.Interaction):
         guild = interaction.guild
         if guild is None:
@@ -1500,7 +1534,7 @@ class ShiftCog(commands.Cog):
             )
         await interaction.response.send_message(embed=emb)
 
-    @app_commands.command(name="shift_lists", description="Show the infractions list (admin only).")
+    @shift_group.command(name="lists", description="Show the infractions list (admin only).")
     async def shift_lists(self, interaction: discord.Interaction):
         user  = interaction.user
         guild = interaction.guild
@@ -1515,8 +1549,8 @@ class ShiftCog(commands.Cog):
         view        = ShiftListsView(self, guild, infractions)
         await interaction.response.send_message(embed=embed, view=view)
 
-    @app_commands.command(
-        name="shift_quota_reminder",
+    @shift_group.command(
+        name="quota_reminder",
         description="DM members who have not met weekly GU quota (HICOM / admin).",
     )
     async def shift_quota_reminder_cmd(self, interaction: discord.Interaction):
@@ -1536,7 +1570,7 @@ class ShiftCog(commands.Cog):
             f"Sent **{n}** quota reminder(s).", ephemeral=True
         )
 
-    @app_commands.command(name="shift_logging", description="Enable or disable shift logging (admin only).")
+    @shift_group.command(name="logging", description="Enable or disable shift logging (admin only).")
     async def shift_logging(self, interaction: discord.Interaction, enabled: Optional[bool] = None):
         user  = interaction.user
         guild = interaction.guild
@@ -1566,7 +1600,7 @@ class ShiftCog(commands.Cog):
         await interaction.response.send_message(
             embed=self.embed_info(f"Set logging to **{enabled}**."), ephemeral=True)
 
-    @app_commands.command(name="shift_excuse", description="Excuse a member for one shift wave (admin only).")
+    @shift_group.command(name="excuse", description="Excuse a member for one shift wave (admin only).")
     async def shift_excuse(self, interaction: discord.Interaction, personnel: discord.Member):
         if not any(r.id == ROLE_ADMIN for r in interaction.user.roles):
             await interaction.response.send_message("You lack admin role.", ephemeral=True)
@@ -1594,7 +1628,7 @@ class ShiftCog(commands.Cog):
         except Exception:
             pass
 
-    @app_commands.command(name="shift_excuse_revoke", description="Revoke a shift excuse (admin only).")
+    @shift_group.command(name="excuse_revoke", description="Revoke a shift excuse (admin only).")
     async def shift_excuse_revoke(self, interaction: discord.Interaction, personnel: discord.Member):
         if not any(r.id == ROLE_ADMIN for r in interaction.user.roles):
             await interaction.response.send_message("You lack admin role.", ephemeral=True)
@@ -1617,7 +1651,9 @@ class ShiftCog(commands.Cog):
         except Exception:
             pass
 
-    admin_group = app_commands.Group(name="shift_admin", description="Administrative shift controls.")
+    admin_group = app_commands.Group(
+        name="admin", description="Administrative shift controls.", parent=shift_group
+    )
 
     @admin_group.command(name="user", description="Admin actions for a specific user.")
     @app_commands.describe(
@@ -1887,10 +1923,10 @@ class ShiftCog(commands.Cog):
             lines = [f"`{i}` — Wave **{label}**" for i, label in labels]
             emb = self.base_embed("Archived Waves", colour_info())
             emb.description = "\n".join(lines)
-            emb.set_footer(text="Use /shift_leaderboard wave:<index> to view a past wave.")
+            emb.set_footer(text="Use /shift leaderboard wave:<index> to view a past wave.")
             await interaction.response.send_message(embed=emb, ephemeral=True)
 
-    @app_commands.command(name="cooldown", description="Show your promotion cooldown status.")
+    @shift_group.command(name="cooldown", description="Show your promotion cooldown status.")
     async def cooldown_slash(self, interaction: discord.Interaction, user: Optional[discord.Member] = None):
         member         = user or interaction.user
         cooldown_days, remaining = self._calculate_member_cooldown(member)
@@ -1950,7 +1986,7 @@ class ShiftCog(commands.Cog):
             is_on_loa(member.id)
         )
 
-    @app_commands.command(name="shift_cooldowns", description="List active promotion cooldowns (admin only).")
+    @shift_group.command(name="cooldowns", description="List active promotion cooldowns (admin only).")
     async def shift_cooldowns(self, interaction: discord.Interaction):
         user  = interaction.user
         guild = interaction.guild
@@ -2032,7 +2068,7 @@ class ShiftCog(commands.Cog):
             embed.set_footer(text="Members currently on LOA, excused, or otherwise quota-exempt are excluded.")
         await ctx.reply(embed=embed, mention_author=False)
 
-    @app_commands.command(name="shift_promotions", description="Generate a formatted promotions post (admin only).")
+    @shift_group.command(name="promotions", description="Generate a formatted promotions post (admin only).")
     @app_commands.describe(
         host="Display name of the host",
         host_rank_emoji="Primary rank emoji string, e.g. <:Commissioner:123>",

@@ -286,13 +286,17 @@ async def on_ready():
     output = startup_output.getvalue()
     print(output)
 
-    try:
-        user = await bot.fetch_user(840949634071658507)  
-        if user:
-            for i in range(0, len(output), 1900):
-                await user.send(f"Console output (part {i//1900+1}):\n```\n{output[i:i+1900]}\n```")
-    except Exception as e:
-        print(f"Failed to DM console output: {e}")
+    if output and not getattr(bot, "_startup_report_sent", False):
+        try:
+            user = await bot.fetch_user(BOT_OWNER_ID)
+            for i in range(0, len(output), 1800):
+                await user.send(
+                    f"Console output (part {i // 1800 + 1}):\n````text\n"
+                    f"{output[i:i + 1800]}\n````"
+                )
+            bot._startup_report_sent = True
+        except Exception as e:
+            print(f"Failed to DM console output to configured owner {BOT_OWNER_ID}: {e}")
     
     print(f"Logged in as {bot.user} (ID: {bot.user.id})")
     print(f"Configured tuna admins: {TUNA_ADMIN_IDS}")
@@ -418,9 +422,13 @@ async def sync_commands(interaction: discord.Interaction):
         await interaction.followup.send(f"❌ Sync failed: {e}", ephemeral=True)
 
 
-BOT_OWNER_ID = 840949634071658507
+try:
+    BOT_OWNER_ID = int(os.getenv("BOT_OWNER_ID", "840949634071658507"))
+except ValueError:
+    BOT_OWNER_ID = 840949634071658507
+    print("⚠️ Invalid BOT_OWNER_ID; falling back to the default owner ID.")
 
-_tuna_admins_env = os.getenv("TUNA_ADMIN_IDS", "840949634071658507").strip()
+_tuna_admins_env = os.getenv("TUNA_ADMIN_IDS", str(BOT_OWNER_ID)).strip()
 if _tuna_admins_env:
     try:
         TUNA_ADMIN_IDS = [int(x.strip()) for x in _tuna_admins_env.split(",") if x.strip()]
