@@ -12,6 +12,7 @@ PASSING_SCORE = 4
 QUESTION_COUNT = 5
 PANEL_TITLE = ""
 PANEL_DESCRIPTION = ""
+PANEL_IMAGE_URL = "https://cdn.discordapp.com/attachments/1398427497724383356/1554603759747993622/Templateeee.png?backend=b2&ex=6abd7d13&is=6abc2b93&hm=736b215c460f0ce60abfb06347de2e03e64ecd0250049b74c486eaea7291cf01&"
 
 # Fill in each course's explanation, role ID, question, three choices, and
 # correct answer index (0=A, 1=B, 2=C). Keep exactly five questions per course.
@@ -21,17 +22,28 @@ CERTIFICATIONS: Dict[str, Dict[str, Any]] = {
         "role_id": 1554580639523545118,
         "explanation_title": "Boat Certification — Introduction",
         "explanation": (
-            "Temporary course introduction: follow Florida boating and navigation laws, "
-            "keep a proper lookout, and travel at a safe speed. When meeting another "
-            "power-driven vessel head-on, both vessels should alter course to starboard "
-            "(right) and pass port-to-port (left side to left side)."
+            "While on maritime patrol, all Florida state boating laws apply. "
+            "At all times, a proper lookout must be kept, and travel must be done at a safe speed. "
+            "When two power-driven vessels are meeting head-on, both vessels should alter course to starboard "
+            "(right) and pass port-to-port (left side to left side). When two power-driven vessels cross at an angle, "
+            "the vessel that has the other vessel on its starboard (right) side must give way and avoid crossing "
+            "ahead if circumstances allow; the other vessel generally maintains its course and speed. "
+            "You must at all times follow the applicable right-of-way rules: "
+            "the vessel required to give way must take early and clear action to keep clear, while the stand-on "
+            "vessel generally maintains its course and speed but must act if necessary to avoid collision. "
+            "Depending on the situation, power-driven vessels must also keep clear of vessels not under command, "
+            "restricted in their ability to maneuver, engaged in fishing, sailing, or constrained by draft. "
+            "If involved in a boating collision or other casualty, render reasonable assistance to anyone affected "
+            "when you can do so without serious danger to your own vessel or people aboard, and provide "
+            "information to the other operator."
         ),
+        "explanation_image_url": "https://media.discordapp.net/attachments/1398427497724383356/1554602994404827166/31.Starboard.png?backend=b2&ex=6abd7c5c&is=6abc2adc&hm=b1b874a967ce347b91aa454a347fa2bc39f18b0cddb849eb36ab11eb8554683a&=&format=webp&quality=lossless",
         "questions": [
-            {"prompt": "", "choices": ["", "", ""], "correct_index": None},
-            {"prompt": "", "choices": ["", "", ""], "correct_index": None},
-            {"prompt": "", "choices": ["", "", ""], "correct_index": None},
-            {"prompt": "", "choices": ["", "", ""], "correct_index": None},
-            {"prompt": "", "choices": ["", "", ""], "correct_index": None},
+            {"prompt": "In this scenario, which vessel must give way?", "choices": ["Vessel A", "Vessel B", "Neither Vessel"], "correct_index": 0, "image_url": "https://cdn.discordapp.com/attachments/1398427497724383356/1554604537745113248/images.png?backend=b2&ex=6abd7dcc&is=6abc2c4c&hm=42a527ac65b6d9a7df836c672b44d764ebc83bcf98d6c9625524f9866aff15d1&"},
+            {"prompt": "Which direction must both vessels alter course toward?", "choices": ["Starboard", "Port", "Up"], "correct_index": 0, "image_url": "https://cdn.discordapp.com/attachments/1398427497724383356/1554605695008243815/5d260904-d712-4ef0-a760-4216a900569b.png?backend=b2&ex=6abd7ee0&is=6abc2d60&hm=da82cc271dc9a01aff9d35ef47404e2cddbdaf0adc52255d9964e05f0b523029&"},
+            {"prompt": "Which vessel would have right of way?", "choices": ["Vessel A", "Vessel B", "Neither Vessel"], "correct_index": 1, "image_url": "https://cdn.discordapp.com/attachments/1398427497724383356/1554606390775910571/e41d1490-f351-4547-b0f8-7a7ea778985a.png?backend=b2&ex=6abd7f86&is=6abc2e06&hm=1815f6bdfd60183976f3766d6e47ac6b3c66bc3d4245e05a93ad18f18f66b015&"},
+            {"prompt": "Do you have the obligation to render aid to others in distress when safe to do so?", "choices": ["Yes", "No", "It depends"], "correct_index": 0, "image_url": ""},
+            {"prompt": "Visibilty is poor, and traffic is heavy. Which of these is the safest option?", "choices": ["Increase speed", "Maintain speed", "Reduce speed"], "correct_index": None, "image_url": "https://cdn.discordapp.com/attachments/1398427497724383356/1554607564019204197/360_F_304677008_d6yFl6obkIVElw8Hy7giHdkb3v3WTzCx.png?backend=b2&ex=6abd809e&is=6abc2f1e&hm=6d4d2086e05ddc26d0bbaaeb7d53ff624a4a11bb877b93467c4d91ff66bdb203&"},
         ],
     },
     "certification_2": {
@@ -44,12 +56,13 @@ CERTIFICATIONS: Dict[str, Dict[str, Any]] = {
             "and proportionate; give clear warnings when feasible, maintain control of "
             "the canine, and stop the use of force when the subject is no longer a threat."
         ),
+        "explanation_image_url": "",
         "questions": [
-            {"prompt": "", "choices": ["", "", ""], "correct_index": None},
-            {"prompt": "", "choices": ["", "", ""], "correct_index": None},
-            {"prompt": "", "choices": ["", "", ""], "correct_index": None},
-            {"prompt": "", "choices": ["", "", ""], "correct_index": None},
-            {"prompt": "", "choices": ["", "", ""], "correct_index": None},
+            {"prompt": "", "choices": ["", "", ""], "correct_index": None, "image_url": ""},
+            {"prompt": "", "choices": ["", "", ""], "correct_index": None, "image_url": ""},
+            {"prompt": "", "choices": ["", "", ""], "correct_index": None, "image_url": ""},
+            {"prompt": "", "choices": ["", "", ""], "correct_index": None, "image_url": ""},
+            {"prompt": "", "choices": ["", "", ""], "correct_index": None, "image_url": ""},
         ],
     },
 }
@@ -119,7 +132,7 @@ class CourseSessionView(discord.ui.View):
         return CERTIFICATIONS[self.course_key]
 
     def explanation_embed(self) -> discord.Embed:
-        return discord.Embed(
+        embed = discord.Embed(
             title=_display(self.course["explanation_title"]),
             description=(
                 f"{_display(self.course['explanation'])}\n\n"
@@ -128,6 +141,10 @@ class CourseSessionView(discord.ui.View):
                 "Press **Next** when you are ready."
             ),
         )
+        image_url = self.course.get("explanation_image_url", "").strip()
+        if image_url:
+            embed.set_image(url=image_url)
+        return embed
 
     def question_embed(self) -> discord.Embed:
         question = self.course["questions"][self.question_index]
@@ -139,6 +156,9 @@ class CourseSessionView(discord.ui.View):
             embed.add_field(
                 name=chr(ord("A") + index), value=_display(choice), inline=False
             )
+        image_url = question.get("image_url", "").strip()
+        if image_url:
+            embed.set_image(url=image_url)
         return embed
 
     async def _check_owner(self, interaction: discord.Interaction) -> bool:
@@ -260,6 +280,8 @@ class CertifiedCog(commands.Cog):
             title=PANEL_TITLE or None,
             description=_display(PANEL_DESCRIPTION),
         )
+        if PANEL_IMAGE_URL.strip():
+            panel.set_image(url=PANEL_IMAGE_URL.strip())
         await interaction.response.send_message(embed=panel, view=CoursePickerView(self))
 
     async def cog_load(self) -> None:
