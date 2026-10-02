@@ -234,9 +234,9 @@ def _read_hicom_section(path: str) -> Optional[str]:
         return None
 
     match = re.search(
-        r'        <div class="hicom-section">.*?(?=\n        <div class="rank-section|\n      </section>)',
+        r'^[ \t]*<div class="hicom-section">.*?(?=^[ \t]*<div class="rank-section\b|^[ \t]*</section>)',
         html,
-        re.DOTALL,
+        re.MULTILINE | re.DOTALL,
     )
     return match.group(0) if match else None
 
@@ -509,6 +509,10 @@ async def generate_roster(guild: discord.Guild, reload_all: bool = False) -> tup
 
         out_path = os.path.join(PROJECT_ROOT, "troopers.html")
         preserved_hicom = _read_hicom_section(out_path)
+        if os.path.exists(out_path) and preserved_hicom is None:
+            print("[roster] Existing HICOM section could not be read; refusing to overwrite the roster.")
+            return False, "Existing HICOM section could not be preserved; roster was not updated."
+
         html = build_html(hicom, regulars, preserved_hicom)
         os.makedirs(os.path.dirname(out_path), exist_ok=True)
         with open(out_path, "w", encoding="utf-8") as f:
